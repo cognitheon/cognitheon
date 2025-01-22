@@ -247,15 +247,18 @@ fn draw_grid(ui: &mut egui::Ui, canvas_state: &CanvasState, canvas_rect: egui::R
 
     // 计算网格级别
     let level_f = -(grid_pixels / 50.0).log2();
-    println!("level_f: {:?}", level_f);
+    // let level_f_offset = level_f + 0.5;
     let level = level_f.floor() as i32;
+    println!("level_f: {:?}", level_f);
+    println!("level: {:?}", level);
+    // let level = level_f.floor() as i32;
 
     // 计算两个相邻级别的网格大小
     let grid_size_1 = base_grid_size * 2.0_f32.powi(level);
     let grid_size_2 = base_grid_size * 2.0_f32.powi(level + 1);
 
     // 计算两个级别的透明度
-    let t = level_f.fract();
+    let t = level_f.fract().abs();
     let alpha_1 = ((1.0 - t) * 255.0) as u8;
     let alpha_2 = (t * 255.0) as u8;
 
