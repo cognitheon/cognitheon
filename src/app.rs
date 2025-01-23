@@ -8,6 +8,8 @@ pub struct TemplateApp {
     #[serde(skip)] // This how you opt-out of serialization of a field
     value: f32,
     canvas_state: CanvasState,
+    #[serde(skip)]
+    editing_text: Option<(egui::Pos2, String)>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -46,6 +48,7 @@ impl Default for TemplateApp {
             label: "Hello World!".to_owned(),
             value: 2.7,
             canvas_state: CanvasState::default(),
+            editing_text: None,
         }
     }
 }
@@ -125,6 +128,10 @@ impl eframe::App for TemplateApp {
             let (canvas_rect, canvas_response) =
                 ui.allocate_exact_size(desired_size, egui::Sense::drag());
 
+            // if canvas_response.double_clicked() {
+            //     println!("double clicked");
+            // }
+
             // =====================
             // 1. 处理缩放 (鼠标滚轮)
             // =====================
@@ -166,57 +173,55 @@ impl eframe::App for TemplateApp {
                 }
             }
 
+            // 处理双击
+            if canvas_response.hovered() {
+                if ui.input(|i| {
+                    i.pointer
+                        .button_double_clicked(egui::PointerButton::Primary)
+                }) {
+                    if let Some(screen_pos) = ui.input(|i| i.pointer.hover_pos()) {
+                        // 将屏幕坐标转换为画布坐标
+                        let canvas_pos = self.canvas_state.to_canvas(screen_pos);
+                        self.editing_text = Some((canvas_pos, String::new()));
+                    }
+                    println!("double clicked");
+                }
+            }
+
+            if let Some((canvas_pos, text)) = &mut self.editing_text {
+                let screen_pos = self.canvas_state.to_screen(*canvas_pos);
+                let text_edit_size = egui::Vec2::new(100.0, 20.0);
+                let text_edit_rect = egui::Rect::from_min_size(screen_pos, text_edit_size);
+                let builder = egui::UiBuilder::new();
+                let text_edit_response = ui
+                    .allocate_new_ui(builder.max_rect(text_edit_rect), |ui| {
+                        let response = ui.text_edit_singleline(text);
+                        response.request_focus();
+                        response
+                    });
+
+                // 如果按下回车或点击其他地方，结束编辑
+                if text_edit_response.inner.lost_focus()
+                    || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                {
+                    if !text.is_empty() {
+                        println!("Text input finished: {}", text);
+                        // 这里可以保存文本到某个集合中
+                    }
+                    self.editing_text = None;
+                }
+            }
+
             // =====================
             // 3. 使用 painter 在画布上绘制
             // =====================
             // let painter = ui.painter_at(canvas_rect);
             draw_grid(ui, &self.canvas_state, canvas_rect);
 
-            // // 下面仅作示例：绘制一个 0..100 区域内的网格和一条线
-            // // 根据画布变换，将它映射到屏幕
-            // let grid_color = egui::Color32::from_gray(100);
-            // for x in (0..=100).step_by(10) {
-            //     let p1 = self.canvas_state.to_screen(egui::Pos2::new(x as f32, 0.0));
-            //     let p2 = self
-            //         .canvas_state
-            //         .to_screen(egui::Pos2::new(x as f32, 100.0));
-            //     painter.line_segment([p1, p2], (1.0, grid_color));
-            // }
-            // for y in (0..=100).step_by(10) {
-            //     let p1 = self.canvas_state.to_screen(egui::Pos2::new(0.0, y as f32));
-            //     let p2 = self
-            //         .canvas_state
-            //         .to_screen(egui::Pos2::new(100.0, y as f32));
-            //     painter.line_segment([p1, p2], (1.0, grid_color));
-            // }
-
-            // // 画一条斜线
-            // let start = self.canvas_state.to_screen(egui::Pos2::new(0.0, 0.0));
-            // let end = self.canvas_state.to_screen(egui::Pos2::new(100.0, 100.0));
-            // painter.line_segment([start, end], (2.0, egui::Color32::RED));
-
-            // // =====================
-            // // 4. 在画布上放置一个按钮 (示意)
-            // // =====================
-            // // 假设我们想让按钮位于画布坐标 (50, 50) 左上角，尺寸 80x30
-            // let canvas_button_pos = egui::Pos2::new(50.0, 50.0);
-            // let button_size = egui::Vec2::new(80.0, 30.0);
-
-            // // 先把它转换成屏幕坐标矩形
-            // let screen_top_left = self.canvas_state.to_screen(canvas_button_pos);
-            // let screen_rect = egui::Rect::from_min_size(screen_top_left, button_size);
-
-            // // 在该矩形内部放置一个 UI
-            // let button_resp = ui.allocate_ui_at_rect(screen_rect, |ui| {
-            //     if ui.button("Canvas Button").clicked() {
-            //         // 在这里处理按钮点击事件
-            //         println!("Canvas Button clicked");
-            //     }
-            // });
-
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 powered_by_egui_and_eframe(ui);
                 egui::warn_if_debug_build(ui);
+                current_zoom(self, ui);
             });
         });
     }
@@ -236,6 +241,12 @@ fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
     });
 }
 
+fn current_zoom(app: &TemplateApp, ui: &mut egui::Ui) {
+    // 获取当前缩放
+    // let zoom = ui.input(|i| i.zoom_delta());
+    ui.label(format!("zoom: {}", app.canvas_state.scale));
+}
+
 fn draw_grid(ui: &mut egui::Ui, canvas_state: &CanvasState, canvas_rect: egui::Rect) {
     let painter = ui.painter_at(canvas_rect);
 
@@ -249,8 +260,8 @@ fn draw_grid(ui: &mut egui::Ui, canvas_state: &CanvasState, canvas_rect: egui::R
     let level_f = -(grid_pixels / 50.0).log2();
     // let level_f_offset = level_f + 0.5;
     let level = level_f.floor() as i32;
-    println!("level_f: {:?}", level_f);
-    println!("level: {:?}", level);
+    // println!("level_f: {:?}", level_f);
+    // println!("level: {:?}", level);
     // let level = level_f.floor() as i32;
 
     // 计算两个相邻级别的网格大小
