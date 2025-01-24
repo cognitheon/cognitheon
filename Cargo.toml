@@ -11,7 +11,7 @@ all-features = true
 targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 
 [dependencies]
-egui = "0.30"
+egui = { version = "0.30", features = ["serde"] }
 eframe = { version = "0.30", default-features = false, features = [
     "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
     "default_fonts", # Embed the default egui fonts.
@@ -23,6 +23,8 @@ log = "0.4"
 
 # You only need serde if you want app persistence:
 serde = { version = "1", features = ["derive"] }
+
+petgraph = {version = "0.7.1", features = ["serde-1"]}
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
