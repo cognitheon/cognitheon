@@ -1,4 +1,5 @@
-use egui::{Sense, Ui, Widget};
+use egui::{Sense, Widget};
+use petgraph::graph::NodeIndex;
 
 use crate::{canvas::CanvasState, colors::node_background};
 
@@ -9,7 +10,8 @@ const COLOR_NODE_BORDER_SELECTED: egui::Color32 =
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Graph {
     pub graph: petgraph::stable_graph::StableGraph<Node, ()>,
-    pub selected_node: Option<u64>,
+    pub selected_node: Option<NodeIndex>,
+    pub editing_node: Option<NodeIndex>,
 }
 
 impl Default for Graph {
@@ -17,39 +19,50 @@ impl Default for Graph {
         Self {
             graph: petgraph::stable_graph::StableGraph::new(),
             selected_node: None,
+            editing_node: None,
         }
     }
 }
 
 impl Graph {
-    pub fn add_node(&mut self, node: Node) {
-        self.graph.add_node(node);
+    pub fn add_node(&mut self, node: Node) -> NodeIndex {
+        let idx = self.graph.add_node(node);
+        idx
     }
 
-    pub fn get_node(&self, id: u64) -> Option<&Node> {
-        self.graph
-            .node_indices()
-            .find(|idx| self.graph.node_weight(*idx).unwrap().id == id)
-            .map(|idx| self.graph.node_weight(idx).unwrap())
+    pub fn get_node(&self, node_index: NodeIndex) -> Option<&Node> {
+        self.graph.node_weight(node_index)
     }
 
-    pub fn get_node_mut(&mut self, id: u64) -> Option<&mut Node> {
-        self.graph
-            .node_indices()
-            .find(|idx| self.graph.node_weight(*idx).unwrap().id == id)
-            .map(|idx| self.graph.node_weight_mut(idx).unwrap())
+    pub fn get_node_mut(&mut self, node_index: NodeIndex) -> Option<&mut Node> {
+        self.graph.node_weight_mut(node_index)
     }
 
-    pub fn set_node(&mut self, node: Node) {
-        self.graph.add_node(node);
+    pub fn get_selected_node(&self) -> Option<NodeIndex> {
+        self.selected_node
     }
 
-    pub fn set_selected_node(&mut self, node_id: Option<u64>) {
-        self.selected_node = node_id;
+    pub fn set_selected_node(&mut self, node_index: Option<NodeIndex>) {
+        self.selected_node = node_index;
+    }
+
+    pub fn get_editing_node(&self) -> Option<NodeIndex> {
+        self.editing_node
+    }
+
+    pub fn set_editing_node(&mut self, node_index: Option<NodeIndex>) {
+        self.editing_node = node_index;
+    }
+
+    pub fn remove_node(&mut self, node_index: NodeIndex) {
+        let result = self.graph.remove_node(node_index);
+        println!("result: {:?}", result);
+        self.set_selected_node(None);
+        self.set_editing_node(None);
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Node {
     pub id: u64,
     pub position: egui::Pos2,
@@ -65,18 +78,58 @@ pub struct Edge {
 }
 
 pub struct NodeWidget<'a> {
-    pub node_id: u64,
+    pub node_index: NodeIndex,
     pub graph: &'a mut Graph,
     pub canvas_state: &'a mut CanvasState,
 }
 
+impl<'a> NodeWidget<'a> {
+    pub fn setup_actions(&mut self, response: &egui::Response, ui: &mut egui::Ui) {
+        // 检测单击事件
+        if response.clicked() {
+            if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
+                println!("node clicked");
+                self.graph.set_selected_node(Some(self.node_index));
+            }
+        }
+
+        // 处理键盘按键
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.graph.set_selected_node(None);
+            self.graph.set_editing_node(None);
+        }
+
+        if ui.input(|i| i.key_pressed(egui::Key::Backspace)) {
+            if self.graph.get_selected_node() == Some(self.node_index) {
+                println!("node deleted");
+                self.graph.remove_node(self.node_index);
+            }
+        }
+
+        if response.dragged() {
+            println!("node dragged");
+            let drag_delta = response.drag_delta();
+            let node = self.graph.get_node_mut(self.node_index).unwrap();
+            node.position += drag_delta;
+        }
+
+        if response.double_clicked() {
+            println!("node double clicked");
+            self.graph.set_editing_node(Some(self.node_index));
+        }
+    }
+}
+
 impl<'a> Widget for NodeWidget<'a> {
-    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
+    fn ui(mut self, ui: &mut egui::Ui) -> egui::Response {
         // 对缩放比例进行区间化
         let scale_level = (self.canvas_state.scale * 10.0).ceil() / 10.0;
-        let node = self.graph.get_node(self.node_id).unwrap();
+        // let node = self.graph.get_node_mut(self.node_id).unwrap();
 
-        let text = format!("{}", node.text);
+        let text = {
+            let node = self.graph.get_node(self.node_index).unwrap();
+            format!("{}", node.text)
+        };
         let font_size = 20.0 * scale_level as f32; // 你可以调整这个数值
                                                    // let font_size = 20.0;
         let font = egui::FontId::new(font_size, egui::FontFamily::Proportional);
@@ -87,28 +140,24 @@ impl<'a> Widget for NodeWidget<'a> {
         let text_size = galley.size();
         // let text_size = egui::Vec2::new(100.0, 100.0);
 
-        let desired_size = text_size + egui::vec2(20.0, 10.0) * self.canvas_state.scale;
+        let min_width = 60.0 * self.canvas_state.scale;
 
-        let screen_pos = self.canvas_state.to_screen(node.position);
+        let desired_size = egui::vec2(
+            (text_size.x + 20.0 * self.canvas_state.scale).max(min_width),
+            text_size.y + 10.0 * self.canvas_state.scale,
+        );
+
+        let screen_pos = {
+            let node = self.graph.get_node(self.node_index).unwrap();
+            self.canvas_state.to_screen(node.position)
+        };
 
         let rect = egui::Rect::from_min_size(screen_pos, desired_size);
 
-        // let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
         let response = ui.allocate_rect(rect, Sense::click_and_drag());
 
-        // 检测单击事件
-        if response.clicked() {
-            println!("node clicked");
-            self.graph.set_selected_node(Some(self.node_id));
-        }
+        self.setup_actions(&response, ui);
 
-        if response.dragged() {
-            println!("node dragged");
-            let drag_delta = response.drag_delta();
-            let node = self.graph.get_node_mut(self.node_id).unwrap();
-            node.position += drag_delta;
-        }
-        // let rect = egui::Rect::from_min_size(screen_pos, desired_size);
         let selected_rect = rect.expand(5.0 * self.canvas_state.scale);
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
@@ -119,7 +168,7 @@ impl<'a> Widget for NodeWidget<'a> {
             // let stroke_width = 3.0 * canvas_state.scale;
             let stroke_width = 1.0;
 
-            if self.graph.selected_node == Some(self.node_id) {
+            if self.graph.get_selected_node() == Some(self.node_index) {
                 painter.rect(
                     selected_rect,
                     egui::Rounding::same(5.0),
@@ -137,14 +186,40 @@ impl<'a> Widget for NodeWidget<'a> {
 
             // 根据rect计算文本位置，使得文本居中
             let text_pos = rect.center();
-            // 绘制文本
-            painter.text(
-                text_pos,
-                egui::Align2::CENTER_CENTER,
-                text,
-                font.clone(),
-                egui::Color32::RED,
-            );
+
+            if self.graph.get_editing_node() == Some(self.node_index) {
+                let mut text = {
+                    let node = self.graph.get_node(self.node_index).unwrap();
+                    format!("{}", node.text)
+                };
+                // let mut response = ui.text_edit_singleline(&mut text);
+                let edit_response = ui.put(
+                    rect,
+                    egui::TextEdit::singleline(&mut text)
+                        .font(font)
+                        .text_color(egui::Color32::RED)
+                        .background_color(node_background(ui.ctx().theme()))
+                        .margin(egui::vec2(10.0, 5.0) * self.canvas_state.scale)
+                        .horizontal_align(egui::Align::Center),
+                );
+
+                if edit_response.lost_focus() {
+                    self.graph.set_editing_node(None);
+                }
+
+                edit_response.request_focus();
+                let node = self.graph.get_node_mut(self.node_index).unwrap();
+                node.text = text;
+            } else {
+                // 绘制文本
+                painter.text(
+                    text_pos,
+                    egui::Align2::CENTER_CENTER,
+                    text,
+                    font.clone(),
+                    egui::Color32::RED,
+                );
+            }
         };
 
         response
@@ -160,22 +235,22 @@ pub fn render_graph(
     _ctx: &egui::Context,
     canvas_state: &mut CanvasState,
 ) {
-    let node_ids = graph
+    let node_indices = graph
         .graph
         .node_indices()
-        .map(|idx| graph.graph.node_weight(idx).unwrap().id)
-        .collect::<Vec<u64>>();
+        .map(|idx| idx)
+        .collect::<Vec<NodeIndex>>();
 
-    println!("node_ids: {:?}", node_ids.len());
+    // println!("node_ids: {:?}", node_ids.len());
 
-    for node_id in node_ids {
+    for node_index in node_indices {
         // println!("node: {}", node.id);
         // Put the node id into the ui
 
         // 在屏幕上指定位置放置label控件
 
         ui.add(NodeWidget {
-            node_id,
+            node_index,
             graph,
             canvas_state,
         });

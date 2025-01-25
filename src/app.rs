@@ -1,7 +1,5 @@
-use egui::util::id_type_map::SerializableAny;
-
 use crate::canvas::{draw_grid, CanvasState};
-use crate::graph::{self, Graph};
+use crate::graph::{self, Graph, Node};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
@@ -174,6 +172,7 @@ impl eframe::App for TemplateApp {
                 }) {
                     self.editing_text = None;
                     self.graph.set_selected_node(None);
+                    self.graph.set_editing_node(None);
                 }
 
                 if ui.input(|i| {
@@ -183,7 +182,16 @@ impl eframe::App for TemplateApp {
                     if let Some(screen_pos) = ui.input(|i| i.pointer.hover_pos()) {
                         // 将屏幕坐标转换为画布坐标
                         let canvas_pos = self.canvas_state.to_canvas(screen_pos);
-                        self.editing_text = Some((canvas_pos, String::new()));
+                        let node = Node {
+                            id: self.global_node_id.fetch_add(1, Ordering::Relaxed),
+                            position: canvas_pos,
+                            text: String::new(),
+                            note: String::new(),
+                        };
+                        let node_index = self.graph.add_node(node.clone());
+                        self.graph.set_selected_node(Some(node_index));
+                        self.graph.set_editing_node(Some(node_index));
+                        // self.editing_text = Some((canvas_pos, String::new()));
                     }
                     println!("double clicked");
                 }
