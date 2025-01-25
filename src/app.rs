@@ -1,5 +1,7 @@
+use egui::util::id_type_map::SerializableAny;
+
 use crate::canvas::{draw_grid, CanvasState};
-use crate::graph;
+use crate::graph::{self, Graph};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
@@ -14,8 +16,7 @@ pub struct TemplateApp {
     canvas_state: CanvasState,
     #[serde(skip)]
     editing_text: Option<(egui::Pos2, String)>,
-    graph: petgraph::stable_graph::StableGraph<graph::Node, ()>,
-    current_node: Option<u32>,
+    graph: Graph,
     global_node_id: AtomicU64,
 }
 
@@ -27,8 +28,7 @@ impl Default for TemplateApp {
             value: 2.7,
             canvas_state: CanvasState::default(),
             editing_text: None,
-            graph: petgraph::stable_graph::StableGraph::new(),
-            current_node: None,
+            graph: Graph::default(),
             global_node_id: AtomicU64::new(0),
         }
     }
@@ -48,6 +48,15 @@ impl TemplateApp {
 
         Default::default()
     }
+
+    // pub fn get_graph(ctx: &egui::Context) -> &Graph {
+    //     ctx.data(|data| {
+    //         let app = data
+    //             .get_persisted::<TemplateApp>(eframe::APP_KEY.into())
+    //             .unwrap();
+    //         &app.graph
+    //     })
+    // }
 }
 
 impl eframe::App for TemplateApp {
@@ -77,6 +86,9 @@ impl eframe::App for TemplateApp {
                 }
 
                 egui::widgets::global_theme_preference_buttons(ui);
+                // 获取全局主题
+                // let theme = ui.ctx().theme();
+                // println!("theme: {:?}", theme);
 
                 if ui.button("test").clicked() {
                     println!("test");
@@ -130,7 +142,7 @@ impl eframe::App for TemplateApp {
 
                     // 更新缩放值
                     self.canvas_state.scale *= zoom_delta;
-                    self.canvas_state.scale = self.canvas_state.scale.clamp(0.01, 1000.0);
+                    self.canvas_state.scale = self.canvas_state.scale.clamp(0.1, 100.0);
 
                     // 计算新的偏移量，保持鼠标位置不变
                     self.canvas_state.offset =
@@ -156,6 +168,14 @@ impl eframe::App for TemplateApp {
 
             // 处理双击
             if canvas_response.hovered() {
+                if ui.input(|i: &egui::InputState| {
+                    i.key_pressed(egui::Key::Escape)
+                        || i.pointer.button_clicked(egui::PointerButton::Primary)
+                }) {
+                    self.editing_text = None;
+                    self.graph.set_selected_node(None);
+                }
+
                 if ui.input(|i| {
                     i.pointer
                         .button_double_clicked(egui::PointerButton::Primary)
@@ -205,7 +225,7 @@ impl eframe::App for TemplateApp {
             // let painter = ui.painter_at(canvas_rect);
             draw_grid(ui, &self.canvas_state, canvas_rect);
 
-            graph::render_graph(&self.graph, ui, ctx, &self.canvas_state);
+            graph::render_graph(&mut self.graph, ui, ctx, &mut self.canvas_state);
 
             // ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
             //     powered_by_egui_and_eframe(ui);

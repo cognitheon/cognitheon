@@ -2,5 +2,6 @@
 
 mod app;
 mod canvas;
+mod colors;
 mod graph;
 pub use app::TemplateApp;
