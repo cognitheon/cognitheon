@@ -16,7 +16,7 @@ impl<'a> NodeWidget<'a> {
         // 检测单击事件
         if response.clicked() {
             if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
-                println!("node clicked");
+                println!("node clicked: {:?}", self.node_index);
                 self.graph.set_selected_node(Some(self.node_index));
             }
         }
@@ -31,7 +31,7 @@ impl<'a> NodeWidget<'a> {
             if self.graph.get_selected_node() == Some(self.node_index)
                 && !self.graph.get_editing_node().is_some()
             {
-                println!("node deleted");
+                println!("node deleted: {:?}", self.node_index);
                 self.graph.remove_node(self.node_index);
             }
         }
@@ -41,20 +41,20 @@ impl<'a> NodeWidget<'a> {
             i.key_pressed(egui::Key::Enter) && i.modifiers.contains(egui::Modifiers::CTRL)
         }) && self.graph.get_editing_node() == Some(self.node_index)
         {
-            println!("node enter");
+            println!("node enter: {:?}", self.node_index);
             self.graph.set_editing_node(None);
         }
 
         if response.dragged() && self.graph.get_editing_node() != Some(self.node_index) {
             self.graph.set_editing_node(None);
-            println!("node dragged");
+            println!("node dragged: {:?}", self.node_index);
             let drag_delta = response.drag_delta() / (self.canvas_state.scale);
             let node = self.graph.get_node_mut(self.node_index).unwrap();
             node.position += drag_delta;
         }
 
         if response.double_clicked() {
-            println!("node double clicked");
+            println!("node double clicked: {:?}", self.node_index);
             self.graph.set_editing_node(Some(self.node_index));
         }
     }
