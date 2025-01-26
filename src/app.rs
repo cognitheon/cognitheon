@@ -1,6 +1,7 @@
-use crate::canvas::{draw_grid, CanvasState};
-use crate::graph::{self, Graph, Node};
-use std::sync::atomic::{AtomicU64, Ordering};
+use crate::canvas::CanvasState;
+use crate::graph::{self, Graph};
+use crate::ui::canvas::CanvasWidget;
+use crate::ui::helpers::draw_grid;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -12,10 +13,7 @@ pub struct TemplateApp {
     #[serde(skip)] // This how you opt-out of serialization of a field
     value: f32,
     canvas_state: CanvasState,
-    #[serde(skip)]
-    editing_text: Option<(egui::Pos2, String)>,
     graph: Graph,
-    global_node_id: AtomicU64,
 }
 
 impl Default for TemplateApp {
@@ -25,9 +23,7 @@ impl Default for TemplateApp {
             label: "Hello World!".to_owned(),
             value: 2.7,
             canvas_state: CanvasState::default(),
-            editing_text: None,
             graph: Graph::default(),
-            global_node_id: AtomicU64::new(0),
         }
     }
 }
@@ -95,146 +91,7 @@ impl eframe::App for TemplateApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            // The central panel the region left after adding TopPanel's and SidePanel's
-            // ui.heading("eframe template");
-
-            // ui.horizontal(|ui| {
-            //     ui.label("Write something: ");
-            //     ui.text_edit_singleline(&mut self.label);
-            // });
-
-            // ui.add(egui::Slider::new(&mut self.value, 0.0..=10.0).text("value"));
-            // if ui.button("Increment").clicked() {
-            //     self.value += 1.0;
-            // }
-
-            // ui.separator();
-
-            // ui.add(egui::github_link_file!(
-            //     "https://github.com/emilk/eframe_template/blob/main/",
-            //     "Source code."
-            // ));
-
-            let desired_size = ui.available_size();
-            let (canvas_rect, canvas_response) =
-                ui.allocate_exact_size(desired_size, egui::Sense::drag());
-
-            if canvas_response.double_clicked() {
-                println!("double clicked");
-            }
-
-            // =====================
-            // 1. 处理缩放 (鼠标滚轮)
-            // =====================
-            if canvas_response.hovered() {
-                let zoom_delta = ui.input(|i| i.zoom_delta());
-                if zoom_delta != 1.0 {
-                    let mouse_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
-
-                    // 计算鼠标指针相对于画布原点的偏移
-                    let mouse_canvas_pos =
-                        (mouse_pos - self.canvas_state.offset) / self.canvas_state.scale;
-
-                    // 保存旧的缩放值
-                    // let old_scale = self.canvas_state.scale;
-
-                    // 更新缩放值
-                    self.canvas_state.scale *= zoom_delta;
-                    self.canvas_state.scale = self.canvas_state.scale.clamp(0.1, 100.0);
-
-                    // 计算新的偏移量，保持鼠标位置不变
-                    self.canvas_state.offset =
-                        mouse_pos - (mouse_canvas_pos * self.canvas_state.scale);
-                }
-            }
-
-            // =====================
-            // 2. 处理平移 (拖拽)
-            // =====================
-            if canvas_response.dragged() {
-                // drag_delta() 表示本次帧被拖拽的增量
-                let drag_delta = canvas_response.drag_delta();
-                self.canvas_state.offset += drag_delta;
-            }
-
-            if canvas_response.hovered() {
-                let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
-                if scroll_delta != egui::Vec2::ZERO {
-                    self.canvas_state.offset += scroll_delta;
-                }
-            }
-
-            // 处理双击
-            if canvas_response.hovered() {
-                if ui.input(|i: &egui::InputState| {
-                    i.key_pressed(egui::Key::Escape)
-                        || i.pointer.button_clicked(egui::PointerButton::Primary)
-                }) {
-                    self.editing_text = None;
-                    self.graph.set_selected_node(None);
-                    self.graph.set_editing_node(None);
-                }
-
-                if ui.input(|i| {
-                    i.pointer
-                        .button_double_clicked(egui::PointerButton::Primary)
-                }) {
-                    if let Some(screen_pos) = ui.input(|i| i.pointer.hover_pos()) {
-                        // 将屏幕坐标转换为画布坐标
-                        let canvas_pos = self.canvas_state.to_canvas(screen_pos);
-                        let node = Node {
-                            id: self.global_node_id.fetch_add(1, Ordering::Relaxed),
-                            position: canvas_pos,
-                            text: String::new(),
-                            note: String::new(),
-                        };
-                        let node_index = self.graph.add_node(node.clone());
-                        self.graph.set_selected_node(Some(node_index));
-                        self.graph.set_editing_node(Some(node_index));
-                        // self.editing_text = Some((canvas_pos, String::new()));
-                    }
-                    println!("double clicked");
-                }
-            }
-
-            if let Some((canvas_pos, text)) = &mut self.editing_text {
-                let screen_pos = self.canvas_state.to_screen(*canvas_pos);
-                let text_edit_size = egui::Vec2::new(100.0, 20.0);
-                let text_edit_rect = egui::Rect::from_min_size(screen_pos, text_edit_size);
-                let builder = egui::UiBuilder::new();
-                let text_edit_response =
-                    ui.allocate_new_ui(builder.max_rect(text_edit_rect), |ui| {
-                        let response = ui.text_edit_singleline(text);
-                        response.request_focus();
-                        response
-                    });
-
-                // 如果按下回车或点击其他地方，结束编辑
-                if text_edit_response.inner.lost_focus()
-                    || ui.input(|i| i.key_pressed(egui::Key::Enter))
-                {
-                    if !text.is_empty() {
-                        println!("Text input finished: {}", text);
-                        // 这里可以保存文本到某个集合中
-                        self.graph.add_node(graph::Node {
-                            id: self.global_node_id.fetch_add(1, Ordering::Relaxed),
-                            position: *canvas_pos,
-                            text: text.clone(),
-                            note: String::new(),
-                        });
-                    }
-                    self.editing_text = None;
-                }
-            }
-
-            // =====================
-            // 3. 使用 painter 在画布上绘制
-            // =====================
-            // let painter = ui.painter_at(canvas_rect);
-            draw_grid(ui, &self.canvas_state, canvas_rect);
-
-            graph::render_graph(&mut self.graph, ui, ctx, &mut self.canvas_state);
-
+            ui.add(CanvasWidget::new(&mut self.canvas_state, &mut self.graph));
             // ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
             //     powered_by_egui_and_eframe(ui);
             //     egui::warn_if_debug_build(ui);
