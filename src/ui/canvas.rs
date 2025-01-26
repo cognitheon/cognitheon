@@ -51,11 +51,18 @@ impl<'a> CanvasWidget<'a> {
         // =====================
         // 2. 处理平移 (拖拽)
         // =====================
-        if canvas_response.dragged() {
-            // drag_delta() 表示本次帧被拖拽的增量
-            let drag_delta = canvas_response.drag_delta();
-            self.canvas_state.offset += drag_delta;
+        // if canvas_response.dragged() {
+        // 只有按住空格键且用鼠标左键时，才允许拖拽
+        if ui.input(|i| i.key_down(egui::Key::Space)) {
+            // 设置鼠标指针为手型
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            if ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary)) {
+                // drag_delta() 表示本次帧被拖拽的增量
+                let drag_delta = canvas_response.drag_delta();
+                self.canvas_state.offset += drag_delta;
+            }
         }
+        // }
 
         if canvas_response.hovered() {
             let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
