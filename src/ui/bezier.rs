@@ -276,7 +276,7 @@ impl<'a> BezierWidget<'a> {
             let screen_pos = self.canvas_state.to_screen(anchor.pos);
             let screen_handle_in = self.canvas_state.to_screen(anchor.handle_in);
             let screen_handle_out = self.canvas_state.to_screen(anchor.handle_out);
-            let radius = 10.0 * self.canvas_state.scale;
+            let radius = 3.0 * self.canvas_state.scale;
             // println!("screen_pos: {:?}", screen_pos);
             // 绘制锚点
             painter.circle(

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use egui::Id;
 
 use crate::canvas::CanvasState;
@@ -29,6 +31,36 @@ impl Default for TemplateApp {
     }
 }
 
+fn setup_font(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "source_hans_sans".to_owned(),
+        Arc::new(egui::FontData::from_static(include_bytes!(
+            "../assets/SourceHanSansSC-Regular.otf"
+        ))),
+    );
+    fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(0, "source_hans_sans".to_owned());
+
+    fonts
+        .families
+        .entry(egui::FontFamily::Monospace)
+        .or_default()
+        .insert(0, "source_hans_sans".to_owned());
+
+    // 在插入字体后添加调试输出
+    println!(
+        "Font data size: {:?} bytes",
+        fonts.font_data["source_hans_sans"].font.len()
+    );
+
+    // Tell egui to use these fonts:
+    ctx.set_fonts(fonts);
+}
+
 impl TemplateApp {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -40,7 +72,7 @@ impl TemplateApp {
         // if let Some(storage) = cc.storage {
         //     return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
         // }
-
+        setup_font(&cc.egui_ctx);
         let graph = Graph::default();
 
         cc.egui_ctx.data_mut(|data| {

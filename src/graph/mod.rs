@@ -1,4 +1,5 @@
 pub mod node;
+pub mod edge;
 
 use crate::graph::node::Node;
 use petgraph::graph::NodeIndex;
