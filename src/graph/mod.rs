@@ -1,5 +1,5 @@
-pub mod node;
 pub mod edge;
+pub mod node;
 
 use crate::graph::node::Node;
 use petgraph::graph::NodeIndex;
@@ -14,6 +14,14 @@ pub struct Graph {
     pub graph: petgraph::stable_graph::StableGraph<Node, ()>,
     pub selected_node: Option<NodeIndex>,
     pub editing_node: Option<NodeIndex>,
+    pub creating_edge: Option<TempEdgeTarget>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub enum TempEdgeTarget {
+    None,
+    Node(NodeIndex),
+    Point(egui::Pos2),
 }
 
 impl Default for Graph {
@@ -22,6 +30,7 @@ impl Default for Graph {
             graph: petgraph::stable_graph::StableGraph::new(),
             selected_node: None,
             editing_node: None,
+            creating_edge: None,
         }
     }
 }
@@ -64,18 +73,17 @@ impl Graph {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-pub struct Edge {
-    pub id: u64,
-    pub source: u64,
-    pub target: u64,
+impl Graph {
+    pub fn add_edge(&mut self, source: NodeIndex, target: NodeIndex) {
+        self.graph.add_edge(source, target, ());
+    }
+
+    pub fn set_creating_edge(&mut self, target: Option<TempEdgeTarget>) {
+        self.creating_edge = target;
+    }
 }
 
-pub fn render_graph(
-    graph: &mut Graph,
-    ui: &mut egui::Ui,
-    canvas_state: &mut CanvasState,
-) {
+pub fn render_graph(graph: &mut Graph, ui: &mut egui::Ui, canvas_state: &mut CanvasState) {
     let node_indices = graph
         .graph
         .node_indices()

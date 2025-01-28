@@ -5,11 +5,11 @@ use petgraph::graph::EdgeIndex;
 
 use crate::{
     canvas::CanvasState,
-    graph::{node::Node, Graph},
+    graph::{node::Node, Graph, TempEdgeTarget},
     ui::bezier::{Anchor, BezierWidget},
 };
 
-use super::{bspline::BsplineWidget, helpers::draw_grid};
+use super::helpers::draw_grid;
 
 pub struct CanvasWidget<'a> {
     pub canvas_state: &'a mut CanvasState,
@@ -103,6 +103,14 @@ impl<'a> CanvasWidget<'a> {
                 }
                 println!("double clicked");
             }
+        }
+
+        // 处理右键拖动
+        if ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary)) {
+            let mouse_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
+            let canvas_pos = self.canvas_state.to_canvas(mouse_pos);
+            self.graph
+                .set_creating_edge(Some(TempEdgeTarget::Point(canvas_pos)));
         }
     }
 }
