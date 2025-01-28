@@ -1,4 +1,8 @@
+use egui::{Shape, Stroke};
+
 use crate::canvas::CanvasState;
+
+use super::bspline::de_boor_algorithm;
 
 pub fn draw_grid(ui: &mut egui::Ui, canvas_state: &CanvasState, canvas_rect: egui::Rect) {
     // println!("draw_grid");
@@ -123,39 +127,68 @@ pub fn draw_grid(ui: &mut egui::Ui, canvas_state: &CanvasState, canvas_rect: egu
         painter.add(shape);
     }
 
-    // 画坐标轴
-    let axis_color = egui::Color32::RED;
-    let origin = canvas_state.to_screen(egui::Pos2::ZERO);
-    let x_axis_end = canvas_state.to_screen(egui::Pos2::new(1000.0, 0.0));
-    let y_axis_end = canvas_state.to_screen(egui::Pos2::new(0.0, 1000.0));
-    painter.line_segment([origin, x_axis_end], (2.0, axis_color));
-    painter.line_segment([origin, y_axis_end], (2.0, axis_color));
+    // // 画坐标轴
+    // let axis_color = egui::Color32::RED;
+    // let origin = canvas_state.to_screen(egui::Pos2::ZERO);
+    // let x_axis_end = canvas_state.to_screen(egui::Pos2::new(1000.0, 0.0));
+    // let y_axis_end = canvas_state.to_screen(egui::Pos2::new(0.0, 1000.0));
+    // painter.line_segment([origin, x_axis_end], (2.0, axis_color));
+    // painter.line_segment([origin, y_axis_end], (2.0, axis_color));
 
-    // 画一条线
-    let line_start = canvas_state.to_screen(egui::Pos2::new(0.0, 0.0));
-    let line_end = canvas_state.to_screen(egui::Pos2::new(1000.0, 1000.0));
-    painter.line_segment([line_start, line_end], (2.0, egui::Color32::GREEN));
+    // // 画一条线
+    // let line_start = canvas_state.to_screen(egui::Pos2::new(0.0, 0.0));
+    // let line_end = canvas_state.to_screen(egui::Pos2::new(1000.0, 1000.0));
+    // painter.line_segment([line_start, line_end], (2.0, egui::Color32::GREEN));
+
+    // // 画一个矩形
+    // let rect = egui::Rect::from_min_max(
+    //     egui::Pos2::new(-500.0, -500.0),
+    //     egui::Pos2::new(-150.0, -150.0),
+    // );
+    // let rect = canvas_state.to_screen_rect(rect);
+    // painter.rect(
+    //     rect,
+    //     egui::Rounding::same(5.0),
+    //     egui::Color32::BLUE,
+    //     egui::Stroke::new(2.0, egui::Color32::GREEN),
+    // );
 
     // 画一个圆
-    let circle_center = canvas_state.to_screen(egui::Pos2::new(500.0, 500.0));
+    // let circle_center = canvas_state.to_screen(egui::Pos2::new(500.0, 500.0));
+    // // 将画布坐标系中的半径转换为屏幕坐标系中的半径
+    // let circle_radius = 100.0 * canvas_state.scale;
+    // painter.circle(
+    //     circle_center,
+    //     circle_radius,
+    //     egui::Color32::RED,
+    //     egui::Stroke::new(2.0, egui::Color32::GREEN),
+    // );
 
-    // 画一个矩形
-    let rect =
-        egui::Rect::from_min_max(egui::Pos2::new(-500.0, -500.0), egui::Pos2::new(50.0, 50.0));
-    let rect = canvas_state.to_screen_rect(rect);
-    painter.rect(
-        rect,
-        egui::Rounding::same(5.0),
-        egui::Color32::BLUE,
-        egui::Stroke::new(2.0, egui::Color32::GREEN),
-    );
+    // // 画B样条曲线
+    // let control_points = vec![
+    //     egui::Pos2::new(0.0, 0.0),
+    //     egui::Pos2::new(100.0, 100.0),
+    //     egui::Pos2::new(100.0, 200.0),
+    //     egui::Pos2::new(300.0, 300.0),
+    //     egui::Pos2::new(100.0, 400.0),
+    // ];
+    // let stroke = Stroke::new(2.0, egui::Color32::DARK_RED);
 
-    // 将画布坐标系中的半径转换为屏幕坐标系中的半径
-    let circle_radius = 100.0 * canvas_state.scale;
-    painter.circle(
-        circle_center,
-        circle_radius,
-        egui::Color32::RED,
-        egui::Stroke::new(2.0, egui::Color32::GREEN),
-    );
+    // let degree = 3;
+    // let knots: Vec<f32> = (0..=control_points.len() + degree)
+    //     .map(|i| i as f32)
+    //     .collect();
+
+    // let t_range = knots[degree]..=knots[control_points.len()];
+    // let steps = 100;
+    // let mut path = Vec::with_capacity(steps);
+
+    // for step in 0..=steps {
+    //     let t = t_range.start() + (t_range.end() - t_range.start()) * (step as f32 / steps as f32);
+    //     if let Some(point) = de_boor_algorithm(&control_points, t, degree, &knots) {
+    //         path.push(canvas_state.to_screen(point));
+    //     }
+    // }
+
+    // painter.add(Shape::line(path, stroke));
 }

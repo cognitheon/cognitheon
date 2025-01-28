@@ -31,4 +31,8 @@ impl CanvasState {
     pub fn to_canvas(&self, screen_pos: egui::Pos2) -> egui::Pos2 {
         (screen_pos - self.offset) / self.scale
     }
+
+    pub fn to_screen_vec2(&self, canvas_pos: egui::Vec2) -> egui::Vec2 {
+        canvas_pos * self.scale + self.offset
+    }
 }

@@ -1,7 +1,8 @@
+use egui::Id;
+
 use crate::canvas::CanvasState;
-use crate::graph::{self, Graph};
+use crate::graph::Graph;
 use crate::ui::canvas::CanvasWidget;
-use crate::ui::helpers::draw_grid;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -36,9 +37,15 @@ impl TemplateApp {
 
         // Load previous app state (if any).
         // Note that you must enable the `persistence` feature for this to work.
-        if let Some(storage) = cc.storage {
-            return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
-        }
+        // if let Some(storage) = cc.storage {
+        //     return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+        // }
+
+        let graph = Graph::default();
+
+        cc.egui_ctx.data_mut(|data| {
+            data.insert_persisted(Id::new("graph"), graph);
+        });
 
         Default::default()
     }
@@ -56,7 +63,7 @@ impl TemplateApp {
 impl eframe::App for TemplateApp {
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, eframe::APP_KEY, self);
+        // eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
     /// Called each time the UI needs repainting, which may be many times per second.
@@ -92,11 +99,17 @@ impl eframe::App for TemplateApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add(CanvasWidget::new(&mut self.canvas_state, &mut self.graph));
-            // ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-            //     powered_by_egui_and_eframe(ui);
-            //     egui::warn_if_debug_build(ui);
-            //     current_zoom(self, ui);
-            // });
+        });
+
+        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                powered_by_egui_and_eframe(ui);
+                egui::warn_if_debug_build(ui);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::LEFT), |ui| {
+                    current_zoom(self, ui);
+                    current_offset(self, ui);
+                });
+            });
         });
     }
 }
@@ -119,4 +132,8 @@ fn current_zoom(app: &TemplateApp, ui: &mut egui::Ui) {
     // 获取当前缩放
     // let zoom = ui.input(|i| i.zoom_delta());
     ui.label(format!("zoom: {}", app.canvas_state.scale));
+}
+
+fn current_offset(app: &TemplateApp, ui: &mut egui::Ui) {
+    ui.label(format!("offset: {:?}", app.canvas_state.offset));
 }

@@ -7,7 +7,8 @@ use crate::canvas::CanvasState;
 
 use crate::ui::node::NodeWidget;
 
-#[derive(serde::Serialize, serde::Deserialize)]
+// #[typetag::serde(tag = "type")]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct Graph {
     pub graph: petgraph::stable_graph::StableGraph<Node, ()>,
     pub selected_node: Option<NodeIndex>,

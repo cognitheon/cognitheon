@@ -1,13 +1,15 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use egui::Widget;
+use egui::{Pos2, Widget};
+use petgraph::graph::EdgeIndex;
 
 use crate::{
     canvas::CanvasState,
     graph::{node::Node, Graph},
+    ui::bezier::{Anchor, BezierWidget},
 };
 
-use super::helpers::draw_grid;
+use super::{bspline::BsplineWidget, helpers::draw_grid};
 
 pub struct CanvasWidget<'a> {
     pub canvas_state: &'a mut CanvasState,
@@ -64,12 +66,12 @@ impl<'a> CanvasWidget<'a> {
         }
         // }
 
-        if canvas_response.hovered() {
-            let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
-            if scroll_delta != egui::Vec2::ZERO {
-                self.canvas_state.offset += scroll_delta;
-            }
+        // if canvas_response.hovered() {
+        let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
+        if scroll_delta != egui::Vec2::ZERO {
+            self.canvas_state.offset += scroll_delta;
         }
+        // }
 
         // 处理双击
         if canvas_response.hovered() {
@@ -111,7 +113,30 @@ impl<'a> Widget for CanvasWidget<'a> {
         let (canvas_rect, canvas_response) =
             ui.allocate_exact_size(desired_size, egui::Sense::drag());
 
+        // println!("desired_size: {:?}", desired_size);
+        // println!("canvas_rect: {:?}", canvas_rect);
+
         draw_grid(ui, self.canvas_state, canvas_rect);
+        // ui.add(BsplineWidget::new(
+        //     vec![
+        //         Pos2::new(0.0, 0.0),
+        //         Pos2::new(100.0, 100.0),
+        //         Pos2::new(100.0, 200.0),
+        //         Pos2::new(300.0, 300.0),
+        //         Pos2::new(100.0, 400.0),
+        //     ],
+        //     canvas_rect,
+        //     self.canvas_state,
+        // ));
+
+        ui.add(BezierWidget::new(
+            vec![
+                Anchor::new_smooth(Pos2::new(0.0, 0.0)),
+                Anchor::new_smooth(Pos2::new(100.0, 200.0)),
+            ],
+            self.canvas_state,
+            EdgeIndex::new(0),
+        ));
 
         crate::graph::render_graph(&mut self.graph, ui, &mut self.canvas_state);
         self.configure_actions(ui, &canvas_response);
