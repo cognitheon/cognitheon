@@ -1,15 +1,15 @@
 use egui::*;
 use petgraph::graph::EdgeIndex;
 
-use crate::canvas::CanvasState;
+use crate::global::CanvasStateResource;
 
 #[derive(Debug)]
 pub struct Anchor {
-    pos: egui::Pos2,        // 锚点坐标
-    handle_in: egui::Pos2,  // 进入方向控制柄
-    handle_out: egui::Pos2, // 退出方向控制柄
-    is_smooth: bool,        // 是否平滑锚点（控制柄对称）
-    selected: bool,         // 是否被选中
+    pub pos: egui::Pos2,        // 锚点坐标
+    pub handle_in: egui::Pos2,  // 进入方向控制柄
+    pub handle_out: egui::Pos2, // 退出方向控制柄
+    pub is_smooth: bool,        // 是否平滑锚点（控制柄对称）
+    pub selected: bool,         // 是否被选中
 }
 
 impl Anchor {
@@ -63,8 +63,7 @@ impl Anchor {
     }
 }
 
-pub struct BezierWidget<'a> {
-    pub canvas_state: &'a mut CanvasState,
+pub struct BezierWidget {
     pub edge_index: EdgeIndex,
 
     pub anchors: Vec<Anchor>,       // 所有锚点
@@ -78,32 +77,31 @@ pub enum DragType {
     HandleOut(usize), // 拖动的退出控制柄索引
 }
 
-impl<'a> Widget for BezierWidget<'a> {
+impl Widget for BezierWidget {
     fn ui(mut self, ui: &mut Ui) -> Response {
-        println!(
-            "anchors: {:?}",
-            self.anchors.iter().map(|a| a.pos).collect::<Vec<_>>()
-        );
+        let canvas_state_resource: CanvasStateResource =
+            ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
+
+        // println!(
+        //     "anchors: {:?}",
+        //     self.anchors.iter().map(|a| a.pos).collect::<Vec<_>>()
+        // );
         let (pos, desired_size) = self.desired_size();
         let rect = Rect::from_min_size(pos, desired_size);
-        let screen_rect = self.canvas_state.to_screen_rect(rect);
+        let screen_rect = canvas_state_resource
+            .read_canvas_state(|canvas_state| canvas_state.to_screen_rect(rect));
 
         let response = ui.allocate_rect(screen_rect, Sense::click_and_drag());
-        self.draw_bezier(ui.painter());
-        self.apply_actions(&response, ui);
+        self.draw_bezier(ui);
+        // self.apply_actions(&response, ui);
         response
     }
 }
 
-impl<'a> BezierWidget<'a> {
-    pub fn new(
-        anchors: Vec<Anchor>,
-        canvas_state: &'a mut CanvasState,
-        edge_index: EdgeIndex,
-    ) -> Self {
+impl BezierWidget {
+    pub fn new(anchors: Vec<Anchor>, edge_index: EdgeIndex) -> Self {
         Self {
             anchors,
-            canvas_state,
             edge_index,
             dragging: None,
         }
@@ -145,7 +143,10 @@ impl<'a> BezierWidget<'a> {
     }
 
     fn apply_actions(&mut self, response: &egui::Response, ui: &mut Ui) {
-        println!("apply_actions: {:?}", self.dragging);
+        let canvas_state_resource: CanvasStateResource =
+            ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
+
+        // println!("apply_actions: {:?}", self.dragging);
 
         // 获取鼠标位置（屏幕坐标）
         let screen_pos = match ui.ctx().input(|i| i.pointer.interact_pos()) {
@@ -153,11 +154,12 @@ impl<'a> BezierWidget<'a> {
             None => return,
         };
         // 转换为世界坐标
-        let world_pos = self.canvas_state.to_canvas(screen_pos);
+        let world_pos = canvas_state_resource
+            .read_canvas_state(|canvas_state| canvas_state.to_canvas(screen_pos));
         // println!("world_pos: {:?}", world_pos);
         if response.drag_started() {
             println!("drag begin");
-            if let Some((drag_type, _)) = self.hit_test(world_pos) {
+            if let Some((drag_type, _)) = self.hit_test(world_pos, ui) {
                 println!("drag begin: {:?}", drag_type);
                 self.dragging = Some(drag_type);
             }
@@ -197,8 +199,12 @@ impl<'a> BezierWidget<'a> {
     }
 
     /// 检测鼠标位置命中的元素
-    fn hit_test(&self, world_pos: Pos2) -> Option<(DragType, usize)> {
-        let hit_radius: f32 = 10.0 * self.canvas_state.scale;
+    fn hit_test(&self, world_pos: Pos2, ui: &mut Ui) -> Option<(DragType, usize)> {
+        let canvas_state_resource: CanvasStateResource =
+            ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
+
+        let hit_radius: f32 =
+            10.0 * canvas_state_resource.read_canvas_state(|canvas_state| canvas_state.scale);
 
         // 优先检测控制柄
         for (i, anchor) in self.anchors.iter().enumerate() {
@@ -223,9 +229,13 @@ impl<'a> BezierWidget<'a> {
     }
 
     fn drag_anchor(&mut self, index: usize, ui: &mut Ui) {
+        let canvas_state_resource: CanvasStateResource =
+            ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
+
         // println!("drag_anchor: {:?}", index);
         let anchor = &mut self.anchors[index];
-        let delta = ui.input(|i| i.pointer.delta()) / self.canvas_state.scale;
+        let delta = ui.input(|i| i.pointer.delta())
+            / canvas_state_resource.read_canvas_state(|canvas_state| canvas_state.scale);
         println!("delta: {:?}", delta);
         anchor.pos += delta;
         anchor.handle_in += delta;
@@ -238,8 +248,12 @@ impl<'a> BezierWidget<'a> {
     }
 
     fn drag_handle_in(&mut self, index: usize, ui: &mut Ui) {
+        let canvas_state_resource: CanvasStateResource =
+            ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
+
         let anchor = &mut self.anchors[index];
-        let delta = ui.input(|i| i.pointer.delta()) / self.canvas_state.scale;
+        let delta = ui.input(|i| i.pointer.delta())
+            / canvas_state_resource.read_canvas_state(|canvas_state| canvas_state.scale);
         anchor.handle_in += delta;
 
         if anchor.is_smooth {
@@ -249,8 +263,12 @@ impl<'a> BezierWidget<'a> {
     }
 
     fn drag_handle_out(&mut self, index: usize, ui: &mut Ui) {
+        let canvas_state_resource: CanvasStateResource =
+            ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
+
         let anchor = &mut self.anchors[index];
-        let delta = ui.input(|i| i.pointer.delta()) / self.canvas_state.scale;
+        let delta = ui.input(|i| i.pointer.delta())
+            / canvas_state_resource.read_canvas_state(|canvas_state| canvas_state.scale);
         anchor.handle_out += delta;
 
         if anchor.is_smooth {
@@ -259,11 +277,15 @@ impl<'a> BezierWidget<'a> {
         }
     }
 
-    fn draw_bezier(&self, painter: &egui::Painter) {
+    fn draw_bezier(&self, ui: &mut Ui) {
+        let painter = ui.painter();
+        let canvas_state_resource: CanvasStateResource =
+            ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
         // 绘制外接矩形
         let rect = Rect::from_min_size(self.anchors[0].pos, self.desired_size().1);
 
-        let screen_rect = self.canvas_state.to_screen_rect(rect);
+        let screen_rect = canvas_state_resource
+            .read_canvas_state(|canvas_state| canvas_state.to_screen_rect(rect));
         painter.rect(
             screen_rect,
             0.0,
@@ -273,16 +295,27 @@ impl<'a> BezierWidget<'a> {
 
         // 绘制所有锚点和控制柄
         for anchor in &self.anchors {
-            let screen_pos = self.canvas_state.to_screen(anchor.pos);
-            let screen_handle_in = self.canvas_state.to_screen(anchor.handle_in);
-            let screen_handle_out = self.canvas_state.to_screen(anchor.handle_out);
-            let radius = 3.0 * self.canvas_state.scale;
+            let (screen_pos, screen_handle_in, screen_handle_out, radius) = canvas_state_resource
+                .read_canvas_state(|canvas_state| {
+                    (
+                        canvas_state.to_screen(anchor.pos),
+                        canvas_state.to_screen(anchor.handle_in),
+                        canvas_state.to_screen(anchor.handle_out),
+                        3.0 * canvas_state.scale,
+                    )
+                });
             // println!("screen_pos: {:?}", screen_pos);
+
+            let color = if anchor.selected {
+                egui::Color32::GOLD
+            } else {
+                egui::Color32::from_rgba_premultiplied(150, 150, 10, 200)
+            };
             // 绘制锚点
             painter.circle(
                 screen_pos,
                 radius,
-                egui::Color32::GOLD,
+                color,
                 (1.0, egui::Color32::GOLD),
             );
 
@@ -315,10 +348,17 @@ impl<'a> BezierWidget<'a> {
         if self.anchors.len() >= 2 {
             let mut path = Vec::new();
             for i in 0..self.anchors.len() - 1 {
-                let screen_start = self.canvas_state.to_screen(self.anchors[i].pos);
-                let screen_end = self.canvas_state.to_screen(self.anchors[i + 1].pos);
-                let screen_cp1 = self.canvas_state.to_screen(self.anchors[i].handle_out);
-                let screen_cp2 = self.canvas_state.to_screen(self.anchors[i + 1].handle_in);
+                let screen_start = canvas_state_resource
+                    .read_canvas_state(|canvas_state| canvas_state.to_screen(self.anchors[i].pos));
+                let screen_end = canvas_state_resource.read_canvas_state(|canvas_state| {
+                    canvas_state.to_screen(self.anchors[i + 1].pos)
+                });
+                let screen_cp1 = canvas_state_resource.read_canvas_state(|canvas_state| {
+                    canvas_state.to_screen(self.anchors[i].handle_out)
+                });
+                let screen_cp2 = canvas_state_resource.read_canvas_state(|canvas_state| {
+                    canvas_state.to_screen(self.anchors[i + 1].handle_in)
+                });
 
                 // 细分三次贝塞尔曲线为线段
                 for t in 0..=100 {

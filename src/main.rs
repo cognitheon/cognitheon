@@ -4,8 +4,6 @@
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
-    use std::sync::Arc;
-
     // use eframe::{egui_wgpu, wgpu};
 
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).

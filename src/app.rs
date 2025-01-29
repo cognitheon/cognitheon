@@ -16,8 +16,8 @@ pub struct TemplateApp {
 
     #[serde(skip)] // This how you opt-out of serialization of a field
     value: f32,
-    canvas_state: CanvasState,
-    graph: Graph,
+    // canvas_state: CanvasState,
+    // graph: Graph,
 }
 
 impl Default for TemplateApp {
@@ -26,8 +26,8 @@ impl Default for TemplateApp {
             // Example stuff:
             label: "Hello World!".to_owned(),
             value: 2.7,
-            canvas_state: CanvasState::default(),
-            graph: Graph::default(),
+            // canvas_state: CanvasState::default(),
+            // graph: Graph::default(),
         }
     }
 }
@@ -84,6 +84,10 @@ impl TemplateApp {
             data.insert_temp(Id::NULL, canvas_state_resource);
         });
 
+        if let Some(storage) = cc.storage {
+            return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+        }
+
         Default::default()
     }
 
@@ -100,7 +104,7 @@ impl TemplateApp {
 impl eframe::App for TemplateApp {
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        // eframe::set_value(storage, eframe::APP_KEY, self);
+        eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
     /// Called each time the UI needs repainting, which may be many times per second.
@@ -135,7 +139,7 @@ impl eframe::App for TemplateApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add(CanvasWidget::new(&mut self.canvas_state, &mut self.graph));
+            ui.add(CanvasWidget::new());
         });
 
         egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
@@ -143,8 +147,8 @@ impl eframe::App for TemplateApp {
                 powered_by_egui_and_eframe(ui);
                 egui::warn_if_debug_build(ui);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::LEFT), |ui| {
-                    current_zoom(self, ui);
-                    current_offset(self, ui);
+                    current_zoom(ui);
+                    current_offset(ui);
                 });
             });
         });
@@ -165,12 +169,21 @@ fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
     });
 }
 
-fn current_zoom(app: &TemplateApp, ui: &mut egui::Ui) {
+fn current_zoom(ui: &mut egui::Ui) {
     // 获取当前缩放
+    let canvas_state_resource: CanvasStateResource =
+        ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
+    canvas_state_resource.read_canvas_state(|canvas_state| {
+        ui.label(format!("zoom: {}", canvas_state.scale));
+    });
     // let zoom = ui.input(|i| i.zoom_delta());
-    ui.label(format!("zoom: {}", app.canvas_state.scale));
+    // ui.label(format!("zoom: {}", canvas_state.scale));
 }
 
-fn current_offset(app: &TemplateApp, ui: &mut egui::Ui) {
-    ui.label(format!("offset: {:?}", app.canvas_state.offset));
+fn current_offset(ui: &mut egui::Ui) {
+    let canvas_state_resource: CanvasStateResource =
+        ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
+    canvas_state_resource.read_canvas_state(|canvas_state| {
+        ui.label(format!("offset: {:?}", canvas_state.offset));
+    });
 }
