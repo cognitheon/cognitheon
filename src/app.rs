@@ -1,8 +1,9 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use egui::Id;
 
 use crate::canvas::CanvasState;
+use crate::global::{CanvasStateResource, GraphResource};
 use crate::graph::Graph;
 use crate::ui::canvas::CanvasWidget;
 
@@ -74,9 +75,13 @@ impl TemplateApp {
         // }
         setup_font(&cc.egui_ctx);
         let graph = Graph::default();
+        let graph_resource = GraphResource(Arc::new(RwLock::new(graph)));
+        let canvas_state_resource =
+            CanvasStateResource(Arc::new(RwLock::new(CanvasState::default())));
 
         cc.egui_ctx.data_mut(|data| {
-            data.insert_persisted(Id::new("graph"), graph);
+            data.insert_persisted(Id::NULL, graph_resource);
+            data.insert_temp(Id::NULL, canvas_state_resource);
         });
 
         Default::default()

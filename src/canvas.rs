@@ -1,4 +1,4 @@
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
 pub struct CanvasState {
     pub offset: egui::Vec2,
     pub scale: f32,

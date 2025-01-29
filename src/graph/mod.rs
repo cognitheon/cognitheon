@@ -1,7 +1,8 @@
 pub mod edge;
 pub mod node;
-
+pub mod node_render_info;
 use crate::graph::node::Node;
+use edge::TempEdge;
 use petgraph::graph::NodeIndex;
 
 use crate::canvas::CanvasState;
@@ -14,14 +15,7 @@ pub struct Graph {
     pub graph: petgraph::stable_graph::StableGraph<Node, ()>,
     pub selected_node: Option<NodeIndex>,
     pub editing_node: Option<NodeIndex>,
-    pub creating_edge: Option<TempEdgeTarget>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-pub enum TempEdgeTarget {
-    None,
-    Node(NodeIndex),
-    Point(egui::Pos2),
+    pub creating_edge: Option<TempEdge>,
 }
 
 impl Default for Graph {
@@ -78,8 +72,12 @@ impl Graph {
         self.graph.add_edge(source, target, ());
     }
 
-    pub fn set_creating_edge(&mut self, target: Option<TempEdgeTarget>) {
+    pub fn set_creating_edge(&mut self, target: Option<TempEdge>) {
         self.creating_edge = target;
+    }
+
+    pub fn get_creating_edge(&self) -> Option<TempEdge> {
+        self.creating_edge.clone()
     }
 }
 

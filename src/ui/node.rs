@@ -1,4 +1,4 @@
-use crate::canvas::CanvasState;
+use crate::{canvas::CanvasState, graph::node::NodeRenderInfo};
 use crate::graph::Graph;
 use egui::{Sense, Widget};
 use petgraph::graph::NodeIndex;
@@ -51,6 +51,11 @@ impl<'a> NodeWidget<'a> {
             let drag_delta = response.drag_delta() / (self.canvas_state.scale);
             let node = self.graph.get_node_mut(self.node_index).unwrap();
             node.position += drag_delta;
+            let render_info = NodeRenderInfo {
+                screen_rect: response.rect,
+                screen_center: response.rect.center(),
+            };
+            node.render_info = Some(render_info);
         }
 
         if response.double_clicked() {

@@ -1,15 +1,18 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use egui::{Pos2, Widget};
-use petgraph::graph::EdgeIndex;
+use egui::{Id, Widget};
+use petgraph::graph::NodeIndex;
 
 use crate::{
     canvas::CanvasState,
-    graph::{node::Node, Graph, TempEdgeTarget},
-    ui::bezier::{Anchor, BezierWidget},
+    graph::{
+        edge::{TempEdge, TempEdgeTarget},
+        node::Node,
+        Graph,
+    },
 };
 
-use super::helpers::draw_grid;
+use super::{helpers::draw_grid, temp_edge::TempEdgeWidget};
 
 pub struct CanvasWidget<'a> {
     pub canvas_state: &'a mut CanvasState,
@@ -24,6 +27,19 @@ impl<'a> CanvasWidget<'a> {
             graph,
             global_node_id: AtomicU64::new(0),
         }
+    }
+
+    pub fn hit_test(&self, pos: egui::Pos2) -> Option<NodeIndex> {
+        self.graph.graph.node_indices().find_map(|node_index| {
+            let node = self.graph.get_node(node_index).unwrap();
+            if node.render_info.is_some()
+                && node.render_info.as_ref().unwrap().screen_rect.contains(pos)
+            {
+                Some(node_index)
+            } else {
+                None
+            }
+        })
     }
 
     pub fn configure_actions(&mut self, ui: &mut egui::Ui, canvas_response: &egui::Response) {
@@ -95,6 +111,7 @@ impl<'a> CanvasWidget<'a> {
                         position: canvas_pos,
                         text: String::new(),
                         note: String::new(),
+                        render_info: None,
                     };
                     let node_index = self.graph.add_node(node.clone());
                     self.graph.set_selected_node(Some(node_index));
@@ -107,11 +124,23 @@ impl<'a> CanvasWidget<'a> {
 
         // 处理右键拖动
         if ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary)) {
+            let mut graph: Graph = ui
+                .ctx()
+                .data_mut(|d| d.get_persisted::<Graph>(Id::new("graph")))
+                .unwrap();
             let mouse_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
             let canvas_pos = self.canvas_state.to_canvas(mouse_pos);
-            self.graph
-                .set_creating_edge(Some(TempEdgeTarget::Point(canvas_pos)));
+            if let Some(node_index) = self.hit_test(mouse_pos) {
+                // 创建临时边
+                let temp_edge = TempEdge {
+                    source: node_index,
+                    target: TempEdgeTarget::Point(canvas_pos),
+                };
+                graph.set_creating_edge(Some(temp_edge));
+            }
         }
+
+        if canvas_response.drag_started() {}
     }
 }
 
@@ -137,14 +166,19 @@ impl<'a> Widget for CanvasWidget<'a> {
         //     self.canvas_state,
         // ));
 
-        ui.add(BezierWidget::new(
-            vec![
-                Anchor::new_smooth(Pos2::new(0.0, 0.0)),
-                Anchor::new_smooth(Pos2::new(100.0, 200.0)),
-            ],
-            self.canvas_state,
-            EdgeIndex::new(0),
-        ));
+        let creating_edge = self.graph.get_creating_edge();
+        if let Some(edge) = creating_edge {
+            ui.add(TempEdgeWidget::new(edge));
+        }
+
+        // ui.add(BezierWidget::new(
+        //     vec![
+        //         // self.graph.get_creating_edge().unwrap().source.,
+        //         Anchor::new_smooth(Pos2::new(100.0, 200.0)),
+        //     ],
+        //     self.canvas_state,
+        //     EdgeIndex::new(0),
+        // ));
 
         crate::graph::render_graph(&mut self.graph, ui, &mut self.canvas_state);
         self.configure_actions(ui, &canvas_response);
