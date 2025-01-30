@@ -1,7 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use egui::{Id, Widget};
-use petgraph::graph::NodeIndex;
+use egui::{emath::TSTransform, Id, Widget};
 
 use crate::{
     global::{CanvasStateResource, GraphResource},
@@ -25,26 +24,26 @@ impl CanvasWidget {
         }
     }
 
-    pub fn hit_test(&self, ui: &mut egui::Ui, screen_pos: egui::Pos2) -> Option<NodeIndex> {
-        let graph_resource: GraphResource = ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
-        graph_resource.read_graph(|graph| {
-            graph.graph.node_indices().find_map(|node_index| {
-                let node = graph.get_node(node_index).unwrap();
-                if node.render_info.is_some()
-                    && node
-                        .render_info
-                        .as_ref()
-                        .unwrap()
-                        .screen_rect
-                        .contains(screen_pos)
-                {
-                    Some(node_index)
-                } else {
-                    None
-                }
-            })
-        })
-    }
+    // pub fn hit_test(&self, ui: &mut egui::Ui, screen_pos: egui::Pos2) -> Option<NodeIndex> {
+    //     let graph_resource: GraphResource = ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
+    //     graph_resource.read_graph(|graph| {
+    //         graph.graph.node_indices().find_map(|node_index| {
+    //             let node = graph.get_node(node_index).unwrap();
+    //             if node.render_info.is_some()
+    //                 && node
+    //                     .render_info
+    //                     .as_ref()
+    //                     .unwrap()
+    //                     .screen_rect
+    //                     .contains(screen_pos)
+    //             {
+    //                 Some(node_index)
+    //             } else {
+    //                 None
+    //             }
+    //         })
+    //     })
+    // }
 
     pub fn configure_actions(&mut self, ui: &mut egui::Ui, canvas_response: &egui::Response) {
         let canvas_state_resource: CanvasStateResource =
@@ -61,20 +60,34 @@ impl CanvasWidget {
             // 计算鼠标指针相对于画布原点的偏移
             canvas_state_resource.with_canvas_state(|canvas_state| {
                 let mouse_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
-                let mouse_canvas_pos = (mouse_pos - canvas_state.offset) / canvas_state.scale;
-                // 保存旧的缩放值
-                // let old_scale = self.canvas_state.scale;
+                // let mouse_canvas_pos = (mouse_pos - canvas_state.offset) / canvas_state.scale;
+                // // 保存旧的缩放值
+                // // let old_scale = self.canvas_state.scale;
 
-                // 更新缩放值
-                let mut scale = canvas_state.scale;
-                scale *= zoom_delta;
-                scale = scale.clamp(0.1, 100.0);
-                canvas_state.scale = scale;
+                // // 更新缩放值
+                // let mut scale = canvas_state.scale;
+                // scale *= zoom_delta;
+                // scale = scale.clamp(0.1, 100.0);
+                // canvas_state.scale = scale;
 
-                // 计算新的偏移量，保持鼠标位置不变
-                // let mut offset = canvas_state.offset;
-                let offset = mouse_pos - (mouse_canvas_pos * scale);
-                canvas_state.offset = offset;
+                // // 计算新的偏移量，保持鼠标位置不变
+                // // let mut offset = canvas_state.offset;
+                // let offset = mouse_pos - (mouse_canvas_pos * scale);
+                // canvas_state.offset = offset;
+
+                let pointer_in_layer = canvas_state.transform.inverse() * mouse_pos;
+                let zoom_delta = ui.ctx().input(|i| i.zoom_delta());
+                let pan_delta = ui.ctx().input(|i| i.smooth_scroll_delta);
+
+                // Zoom in on pointer:
+                canvas_state.transform = canvas_state.transform
+                    * TSTransform::from_translation(pointer_in_layer.to_vec2())
+                    * TSTransform::from_scaling(zoom_delta)
+                    * TSTransform::from_translation(-pointer_in_layer.to_vec2());
+
+                // Pan:
+                canvas_state.transform =
+                    TSTransform::from_translation(pan_delta) * canvas_state.transform;
             });
         }
         // }
@@ -91,9 +104,11 @@ impl CanvasWidget {
                 canvas_state_resource.with_canvas_state(|canvas_state| {
                     // drag_delta() 表示本次帧被拖拽的增量
                     let drag_delta = canvas_response.drag_delta();
-                    let mut offset = canvas_state.offset;
-                    offset += drag_delta;
-                    canvas_state.offset = offset;
+                    // let mut offset = canvas_state.offset;
+                    // offset += drag_delta;
+                    // canvas_state.offset = offset;
+
+                    canvas_state.transform.translation += drag_delta;
                 });
             }
         }
@@ -103,9 +118,11 @@ impl CanvasWidget {
         let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
         if scroll_delta != egui::Vec2::ZERO {
             canvas_state_resource.with_canvas_state(|canvas_state| {
-                let mut offset = canvas_state.offset;
-                offset += scroll_delta;
-                canvas_state.offset = offset;
+                // let mut offset = canvas_state.offset;
+                // offset += scroll_delta;
+                // canvas_state.offset = offset;
+
+                canvas_state.transform.translation += scroll_delta;
             });
         }
         // }
@@ -130,8 +147,10 @@ impl CanvasWidget {
                     let node = canvas_state_resource.read_canvas_state(|canvas_state| {
                         // 将屏幕坐标转换为画布坐标
                         let canvas_pos = canvas_state.to_canvas(screen_pos);
+                        let new_node_id =
+                            canvas_state.global_node_id.fetch_add(1, Ordering::Relaxed);
                         Node {
-                            id: self.global_node_id.fetch_add(1, Ordering::Relaxed),
+                            id: new_node_id,
                             position: canvas_pos,
                             text: String::new(),
                             note: String::new(),
@@ -157,7 +176,7 @@ impl Widget for CanvasWidget {
         let graph_resource: GraphResource = ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
 
         let desired_size = ui.available_size();
-        let (canvas_rect, canvas_response) =
+        let (screen_rect, canvas_response) =
             ui.allocate_exact_size(desired_size, egui::Sense::drag());
 
         // println!("desired_size: {:?}", desired_size);
@@ -166,7 +185,7 @@ impl Widget for CanvasWidget {
             ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
 
         canvas_state_resource.read_canvas_state(|canvas_state| {
-            draw_grid(ui, canvas_state, canvas_rect);
+            draw_grid(ui, canvas_state, screen_rect);
         });
 
         // draw_grid(ui, canvas_state, canvas_rect);
@@ -184,8 +203,10 @@ impl Widget for CanvasWidget {
 
         let temp_edge = graph_resource.read_graph(|graph| graph.get_temp_edge());
         if let Some(edge) = temp_edge {
-            println!("temp_edge: {:?}", edge.target);
-            ui.add(TempEdgeWidget::new(edge));
+            println!("temp_edge target: {:?}", edge.target);
+            ui.add(TempEdgeWidget {
+                temp_edge: edge.clone(),
+            });
         }
 
         // ui.add(BezierWidget::new(

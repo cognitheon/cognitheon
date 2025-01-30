@@ -1,21 +1,18 @@
 use petgraph::graph::NodeIndex;
 
+use crate::ui::bezier::BezierEdge;
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Edge {
     pub id: u64,
     pub source: NodeIndex,
     pub target: NodeIndex,
+    pub text: Option<String>,
+    pub edge_type: EdgeType,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct TempEdge {
-    pub source: NodeIndex,
-    pub target: TempEdgeTarget,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub enum TempEdgeTarget {
-    None,
-    Node(NodeIndex),
-    Point(egui::Pos2),
+pub enum EdgeType {
+    Line,
+    Bezier(BezierEdge),
 }

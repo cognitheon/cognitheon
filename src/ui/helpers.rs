@@ -1,14 +1,14 @@
 use crate::canvas::CanvasState;
 
-pub fn draw_grid(ui: &mut egui::Ui, canvas_state: &CanvasState, canvas_rect: egui::Rect) {
+pub fn draw_grid(ui: &mut egui::Ui, canvas_state: &CanvasState, screen_rect: egui::Rect) {
     // println!("draw_grid");
-    let painter = ui.painter_at(canvas_rect);
+    let painter = ui.painter_at(screen_rect);
 
     // 基准网格间距（画布坐标系中的单位）
     let base_grid_size = 100.0;
 
     // 计算当前缩放下的网格像素大小
-    let grid_pixels = base_grid_size * canvas_state.scale;
+    let grid_pixels = base_grid_size * canvas_state.transform.scaling;
 
     // 计算网格级别
     let level_f = -(grid_pixels / base_grid_size).log2();
@@ -43,8 +43,8 @@ pub fn draw_grid(ui: &mut egui::Ui, canvas_state: &CanvasState, canvas_rect: egu
     let grid_color_2 = egui::Color32::from_rgba_unmultiplied(100, 100, 100, alpha_2);
 
     // 计算可见区域的边界（画布坐标）
-    let min_canvas = canvas_state.to_canvas(canvas_rect.min);
-    let max_canvas = canvas_state.to_canvas(canvas_rect.max);
+    let min_canvas = canvas_state.to_canvas(screen_rect.min);
+    let max_canvas = canvas_state.to_canvas(screen_rect.max);
 
     // 绘制第一级网格
     let x_start_1 = (min_canvas.x / grid_size_1).floor() as i32;

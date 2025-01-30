@@ -4,7 +4,8 @@ pub mod node_render_info;
 
 use crate::global::GraphResource;
 use crate::graph::node::Node;
-use edge::TempEdge;
+use crate::ui::temp_edge::TempEdge;
+use edge::Edge;
 use egui::Id;
 use petgraph::graph::NodeIndex;
 
@@ -13,7 +14,7 @@ use crate::ui::node::NodeWidget;
 // #[typetag::serde(tag = "type")]
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Graph {
-    pub graph: petgraph::stable_graph::StableGraph<Node, ()>,
+    pub graph: petgraph::stable_graph::StableGraph<Node, Edge>,
     pub selected_node: Option<NodeIndex>,
     pub editing_node: Option<NodeIndex>,
     pub temp_edge: Option<TempEdge>,
@@ -69,8 +70,8 @@ impl Graph {
 }
 
 impl Graph {
-    pub fn add_edge(&mut self, source: NodeIndex, target: NodeIndex) {
-        self.graph.add_edge(source, target, ());
+    pub fn add_edge(&mut self, edge: Edge) {
+        self.graph.add_edge(edge.source, edge.target, edge);
     }
 
     pub fn set_temp_edge(&mut self, temp_edge: Option<TempEdge>) {

@@ -174,7 +174,7 @@ fn current_zoom(ui: &mut egui::Ui) {
     let canvas_state_resource: CanvasStateResource =
         ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
     canvas_state_resource.read_canvas_state(|canvas_state| {
-        ui.label(format!("zoom: {}", canvas_state.scale));
+        ui.label(format!("zoom: {:.2}", canvas_state.transform.scaling));
     });
     // let zoom = ui.input(|i| i.zoom_delta());
     // ui.label(format!("zoom: {}", canvas_state.scale));
@@ -184,6 +184,6 @@ fn current_offset(ui: &mut egui::Ui) {
     let canvas_state_resource: CanvasStateResource =
         ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
     canvas_state_resource.read_canvas_state(|canvas_state| {
-        ui.label(format!("offset: {:?}", canvas_state.offset));
+        ui.label(format!("offset: {:?}", canvas_state.transform.translation));
     });
 }
