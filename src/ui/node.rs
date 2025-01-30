@@ -18,51 +18,60 @@ impl NodeWidget {
         let canvas_state_resource: CanvasStateResource =
             ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
 
-        if response.double_clicked() {
-            println!("node double clicked: {:?}", self.node_index);
-            graph_resource.with_graph(|graph| {
-                graph.set_editing_node(Some(self.node_index));
-            });
-        }
-
         // 处理右键拖动
         if response.drag_started_by(egui::PointerButton::Secondary) {
             println!("right button drag started");
             let mouse_screen_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
-            canvas_state_resource.read_canvas_state(|canvas_state| {
-                let canvas_pos = canvas_state.to_canvas(mouse_screen_pos);
-                // if let Some(node_index) = self.hit_test(ui, mouse_screen_pos) {
-                // 创建临时边
-                let temp_edge = TempEdge {
-                    source: self.node_index,
-                    target: TempEdgeTarget::Point(canvas_pos),
-                };
-                graph_resource.with_graph(|graph| {
-                    graph.set_creating_edge(Some(temp_edge));
-                });
-                // }
+            // let canvas_pos = canvas_state_resource
+            //     .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
+
+            // if let Some(node_index) = self.hit_test(ui, mouse_screen_pos) {
+            // 创建临时边
+            let temp_edge = TempEdge {
+                source: self.node_index,
+                target: TempEdgeTarget::Point(mouse_screen_pos),
+            };
+            graph_resource.with_graph(|graph| {
+                graph.set_temp_edge(None);
+                graph.set_temp_edge(Some(temp_edge));
             });
+            // }
+            // });
         }
 
-        if response.dragged_by(egui::PointerButton::Secondary) {
+        if ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary)) {
             println!("right button dragging");
             let mouse_screen_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
             graph_resource.with_graph(|graph| {
-                let creating_edge = graph.get_creating_edge();
+                let temp_edge = graph.get_temp_edge();
+                println!("====temp_edge: {:?}====", temp_edge);
                 let mouse_canvas_pos = canvas_state_resource
                     .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
-                if let Some(temp_edge) = creating_edge {
+                if let Some(temp_edge_clone) = temp_edge.clone() {
                     // 更新临时边目标坐标
-                    let mut temp_edge = temp_edge;
-                    temp_edge.target = TempEdgeTarget::Point(mouse_canvas_pos);
-                    graph.set_creating_edge(Some(temp_edge));
+                    let mut new_temp_edge = temp_edge_clone;
+                    new_temp_edge.target = TempEdgeTarget::Point(mouse_canvas_pos);
+                    graph.set_temp_edge(Some(new_temp_edge));
                 }
             });
+            // println!("mouse_screen_pos: {:?}", mouse_screen_pos);
+        }
+        println!(
+            "NodeWidget::setup_actions: {:?}",
+            ui.input(|i| i.pointer.hover_pos())
+        );
+
+        if ui.input(|i| i.pointer.button_released(egui::PointerButton::Secondary)) {
+            println!("right button drag stopped");
+            // graph_resource.with_graph(|graph| {
+            //     graph.set_temp_edge(None);
+            // });
         }
 
-        if response.drag_stopped_by(egui::PointerButton::Secondary) {
+        if response.double_clicked() {
+            println!("node double clicked: {:?}", self.node_index);
             graph_resource.with_graph(|graph| {
-                graph.set_creating_edge(None);
+                graph.set_editing_node(Some(self.node_index));
             });
         }
 

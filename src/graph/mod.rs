@@ -1,7 +1,6 @@
 pub mod edge;
 pub mod node;
 pub mod node_render_info;
-use std::sync::{Arc, RwLock};
 
 use crate::global::GraphResource;
 use crate::graph::node::Node;
@@ -15,18 +14,18 @@ use crate::ui::node::NodeWidget;
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Graph {
     pub graph: petgraph::stable_graph::StableGraph<Node, ()>,
-    pub selected_node: Arc<RwLock<Option<NodeIndex>>>,
-    pub editing_node: Arc<RwLock<Option<NodeIndex>>>,
-    pub creating_edge: Arc<RwLock<Option<TempEdge>>>,
+    pub selected_node: Option<NodeIndex>,
+    pub editing_node: Option<NodeIndex>,
+    pub temp_edge: Option<TempEdge>,
 }
 
 impl Default for Graph {
     fn default() -> Self {
         Self {
             graph: petgraph::stable_graph::StableGraph::new(),
-            selected_node: Arc::new(RwLock::new(None)),
-            editing_node: Arc::new(RwLock::new(None)),
-            creating_edge: Arc::new(RwLock::new(None)),
+            selected_node: None,
+            editing_node: None,
+            temp_edge: None,
         }
     }
 }
@@ -46,23 +45,19 @@ impl Graph {
     }
 
     pub fn get_selected_node(&self) -> Option<NodeIndex> {
-        self.selected_node.read().unwrap().clone()
+        self.selected_node
     }
 
     pub fn set_selected_node(&mut self, node_index: Option<NodeIndex>) {
-        let mut selected_node = self.selected_node.write().unwrap();
-        *selected_node = node_index;
-        drop(selected_node);
+        self.selected_node = node_index;
     }
 
     pub fn get_editing_node(&self) -> Option<NodeIndex> {
-        self.editing_node.read().unwrap().clone()
+        self.editing_node
     }
 
     pub fn set_editing_node(&mut self, node_index: Option<NodeIndex>) {
-        let mut editing_node = self.editing_node.write().unwrap();
-        *editing_node = node_index;
-        drop(editing_node);
+        self.editing_node = node_index;
     }
 
     pub fn remove_node(&mut self, node_index: NodeIndex) {
@@ -78,14 +73,19 @@ impl Graph {
         self.graph.add_edge(source, target, ());
     }
 
-    pub fn set_creating_edge(&mut self, target: Option<TempEdge>) {
-        let mut creating_edge = self.creating_edge.write().unwrap();
-        *creating_edge = target;
-        drop(creating_edge);
+    pub fn set_temp_edge(&mut self, temp_edge: Option<TempEdge>) {
+        if let Some(temp_edge_clone) = temp_edge.clone() {
+            println!("set_temp_edge: {:?}", temp_edge_clone.target);
+        }
+        self.temp_edge = temp_edge;
     }
 
-    pub fn get_creating_edge(&self) -> Option<TempEdge> {
-        self.creating_edge.read().unwrap().clone()
+    // 返回创建的临时边
+    pub fn get_temp_edge(&self) -> Option<TempEdge> {
+        if let Some(temp_edge) = self.temp_edge.clone() {
+            println!("get_temp_edge: {:?}", temp_edge.target);
+        }
+        self.temp_edge.clone()
     }
 }
 

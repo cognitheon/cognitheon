@@ -93,7 +93,7 @@ impl Widget for BezierWidget {
 
         let response = ui.allocate_rect(screen_rect, Sense::click_and_drag());
         self.draw_bezier(ui);
-        // self.apply_actions(&response, ui);
+        self.apply_actions(&response, ui);
         response
     }
 }
@@ -278,11 +278,13 @@ impl BezierWidget {
     }
 
     fn draw_bezier(&self, ui: &mut Ui) {
+        println!("BezierWidget::draw_bezier");
         let painter = ui.painter();
         let canvas_state_resource: CanvasStateResource =
             ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
         // 绘制外接矩形
-        let rect = Rect::from_min_size(self.anchors[0].pos, self.desired_size().1);
+        let rect = self.desired_size();
+        let rect = Rect::from_min_size(rect.0, rect.1);
 
         let screen_rect = canvas_state_resource
             .read_canvas_state(|canvas_state| canvas_state.to_screen_rect(rect));
@@ -295,16 +297,24 @@ impl BezierWidget {
 
         // 绘制所有锚点和控制柄
         for anchor in &self.anchors {
-            let (screen_pos, screen_handle_in, screen_handle_out, radius) = canvas_state_resource
-                .read_canvas_state(|canvas_state| {
-                    (
-                        canvas_state.to_screen(anchor.pos),
-                        canvas_state.to_screen(anchor.handle_in),
-                        canvas_state.to_screen(anchor.handle_out),
-                        3.0 * canvas_state.scale,
-                    )
-                });
+            // let (screen_pos, screen_handle_in, screen_handle_out, radius) = canvas_state_resource
+            //     .read_canvas_state(|canvas_state| {
+            //         (
+            //             canvas_state.to_screen(anchor.pos),
+            //             canvas_state.to_screen(anchor.handle_in),
+            //             canvas_state.to_screen(anchor.handle_out),
+            //             3.0 * canvas_state.scale,
+            //         )
+            //     });
             // println!("screen_pos: {:?}", screen_pos);
+            let radius =
+                3.0 * canvas_state_resource.read_canvas_state(|canvas_state| canvas_state.scale);
+
+            // let screen_pos = anchor.pos;
+            // let screen_handle_in = anchor.handle_in;
+            // let screen_handle_out = anchor.handle_out;
+            // let radius =
+            //     3.0 * canvas_state_resource.read_canvas_state(|canvas_state| canvas_state.scale);
 
             let color = if anchor.selected {
                 egui::Color32::GOLD
@@ -312,32 +322,27 @@ impl BezierWidget {
                 egui::Color32::from_rgba_premultiplied(150, 150, 10, 200)
             };
             // 绘制锚点
-            painter.circle(
-                screen_pos,
-                radius,
-                color,
-                (1.0, egui::Color32::GOLD),
-            );
+            painter.circle(anchor.pos, radius, color, (1.0, egui::Color32::GOLD));
 
             // 绘制控制柄线
             painter.line_segment(
-                [screen_pos, screen_handle_in],
+                [anchor.pos, anchor.handle_in],
                 (3.0, egui::Color32::LIGHT_BLUE),
             );
             painter.line_segment(
-                [screen_pos, screen_handle_out],
+                [anchor.pos, anchor.handle_out],
                 (3.0, egui::Color32::LIGHT_RED),
             );
 
             // 绘制控制柄点
             painter.circle(
-                screen_handle_in,
+                anchor.handle_in,
                 radius,
                 egui::Color32::BLUE,
                 (3.0, egui::Color32::LIGHT_BLUE),
             );
             painter.circle(
-                screen_handle_out,
+                anchor.handle_out,
                 radius,
                 egui::Color32::RED,
                 (3.0, egui::Color32::LIGHT_RED),
@@ -348,8 +353,7 @@ impl BezierWidget {
         if self.anchors.len() >= 2 {
             let mut path = Vec::new();
             for i in 0..self.anchors.len() - 1 {
-                let screen_start = canvas_state_resource
-                    .read_canvas_state(|canvas_state| canvas_state.to_screen(self.anchors[i].pos));
+                let screen_start = self.anchors[i].pos;
                 let screen_end = canvas_state_resource.read_canvas_state(|canvas_state| {
                     canvas_state.to_screen(self.anchors[i + 1].pos)
                 });

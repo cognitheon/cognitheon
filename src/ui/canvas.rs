@@ -182,8 +182,9 @@ impl Widget for CanvasWidget {
         //     self.canvas_state,
         // ));
 
-        let creating_edge = graph_resource.read_graph(|graph| graph.get_creating_edge());
-        if let Some(edge) = creating_edge {
+        let temp_edge = graph_resource.read_graph(|graph| graph.get_temp_edge());
+        if let Some(edge) = temp_edge {
+            println!("temp_edge: {:?}", edge.target);
             ui.add(TempEdgeWidget::new(edge));
         }
 
