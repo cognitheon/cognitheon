@@ -16,18 +16,23 @@ pub struct TemplateApp {
 
     #[serde(skip)] // This how you opt-out of serialization of a field
     value: f32,
-    // canvas_state: CanvasState,
-    // graph: Graph,
+    canvas_resource: CanvasStateResource,
+    graph_resource: GraphResource,
+    #[serde(skip)]
+    canvas_widget: CanvasWidget,
 }
 
 impl Default for TemplateApp {
     fn default() -> Self {
+        let graph_resource = GraphResource::default();
+        let canvas_resource = CanvasStateResource::default();
         Self {
             // Example stuff:
             label: "Hello World!".to_owned(),
             value: 2.7,
-            // canvas_state: CanvasState::default(),
-            // graph: Graph::default(),
+            canvas_resource: canvas_resource.clone(),
+            graph_resource: graph_resource.clone(),
+            canvas_widget: CanvasWidget::new(graph_resource.clone(), canvas_resource.clone()),
         }
     }
 }
@@ -139,7 +144,7 @@ impl eframe::App for TemplateApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add(CanvasWidget::new());
+            ui.add(&mut self.canvas_widget);
         });
 
         egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {

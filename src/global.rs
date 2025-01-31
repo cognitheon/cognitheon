@@ -5,6 +5,12 @@ use crate::{canvas::CanvasState, graph::Graph};
 #[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
 pub struct GraphResource(pub Arc<RwLock<Graph>>);
 
+impl Default for GraphResource {
+    fn default() -> Self {
+        Self(Arc::new(RwLock::new(Graph::default())))
+    }
+}
+
 impl GraphResource {
     pub fn with_graph<T>(&self, f: impl FnOnce(&mut Graph) -> T) -> T {
         let mut graph = self.0.write().unwrap();
@@ -29,5 +35,11 @@ impl CanvasStateResource {
     pub fn read_canvas_state<T>(&self, f: impl FnOnce(&CanvasState) -> T) -> T {
         let canvas_state = self.0.read().unwrap();
         f(&canvas_state)
+    }
+}
+
+impl Default for CanvasStateResource {
+    fn default() -> Self {
+        Self(Arc::new(RwLock::new(CanvasState::default())))
     }
 }

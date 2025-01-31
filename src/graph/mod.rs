@@ -2,7 +2,7 @@ pub mod edge;
 pub mod node;
 pub mod node_render_info;
 
-use crate::global::GraphResource;
+use crate::global::{CanvasStateResource, GraphResource};
 use crate::graph::node::Node;
 use crate::ui::temp_edge::TempEdge;
 use edge::Edge;
@@ -90,10 +90,12 @@ impl Graph {
     }
 }
 
-pub fn render_graph(ui: &mut egui::Ui) {
+pub fn render_graph(
+    ui: &mut egui::Ui,
+    graph_resource: GraphResource,
+    canvas_state_resource: CanvasStateResource,
+) {
     // println!("render_graph");
-
-    let graph_resource: GraphResource = ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
 
     let node_indices = graph_resource.read_graph(|graph| {
         graph
@@ -117,12 +119,10 @@ pub fn render_graph(ui: &mut egui::Ui) {
         // println!("node: {}", node.id);
         // Put the node id into the ui
 
-        // 在屏幕上指定位置放置label控件
-
         ui.add(NodeWidget {
             node_index,
-            // graph,
-            // canvas_state,
+            graph_resource: graph_resource.clone(),
+            canvas_state_resource: canvas_state_resource.clone(),
         });
     }
 

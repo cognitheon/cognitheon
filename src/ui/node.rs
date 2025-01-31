@@ -10,21 +10,21 @@ use crate::colors::{node_background, node_border, node_border_selected};
 
 pub struct NodeWidget {
     pub node_index: NodeIndex,
+    pub graph_resource: GraphResource,
+    pub canvas_state_resource: CanvasStateResource,
     // pub graph: &'a mut Graph,
     // pub canvas_state: &'a mut CanvasState,
 }
 
 impl NodeWidget {
     pub fn setup_actions(&mut self, response: &egui::Response, ui: &mut egui::Ui) {
-        let graph_resource: GraphResource = ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
-        let canvas_state_resource: CanvasStateResource =
-            ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
+        // self.handle_secondary_drag(ui, response);
 
-        self.handle_secondary_drag(ui, response);
+        // self.handle_secondary_drag(ui, response);
 
         if response.double_clicked() {
             println!("node double clicked: {:?}", self.node_index);
-            graph_resource.with_graph(|graph| {
+            self.graph_resource.with_graph(|graph| {
                 graph.set_editing_node(Some(self.node_index));
             });
         }
@@ -33,7 +33,7 @@ impl NodeWidget {
         if response.clicked() {
             if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
                 println!("node clicked: {:?}", self.node_index);
-                graph_resource.with_graph(|graph| {
+                self.graph_resource.with_graph(|graph| {
                     if graph.get_editing_node() != Some(self.node_index) {
                         graph.set_editing_node(None);
                     }
@@ -44,14 +44,14 @@ impl NodeWidget {
 
         // 处理键盘按键
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            graph_resource.with_graph(|graph| {
+            self.graph_resource.with_graph(|graph| {
                 graph.set_selected_node(None);
                 graph.set_editing_node(None);
             });
         }
 
         if ui.input(|i| i.key_pressed(egui::Key::Backspace)) {
-            graph_resource.with_graph(|graph| {
+            self.graph_resource.with_graph(|graph| {
                 if graph.get_selected_node() == Some(self.node_index)
                     && !graph.get_editing_node().is_some()
                 {
@@ -64,63 +64,61 @@ impl NodeWidget {
         // Ctrl + Enter
         if ui.input(|i| {
             i.key_pressed(egui::Key::Enter) && i.modifiers.contains(egui::Modifiers::CTRL)
-        }) && graph_resource.read_graph(|graph| graph.get_editing_node())
+        }) && self
+            .graph_resource
+            .read_graph(|graph| graph.get_editing_node())
             == Some(self.node_index)
         {
             println!("node enter: {:?}", self.node_index);
-            graph_resource.with_graph(|graph| {
+            self.graph_resource.with_graph(|graph| {
                 graph.set_editing_node(None);
             });
         }
 
         // 处理拖动事件
         if response.dragged_by(egui::PointerButton::Primary)
-            && graph_resource.read_graph(|graph| graph.get_editing_node()) != Some(self.node_index)
+            && self
+                .graph_resource
+                .read_graph(|graph| graph.get_editing_node())
+                != Some(self.node_index)
         {
-            graph_resource.with_graph(|graph| {
+            self.graph_resource.with_graph(|graph| {
                 graph.set_editing_node(None);
             });
             println!("node dragged: {:?}", self.node_index);
             let drag_delta = response.drag_delta()
-                / (canvas_state_resource
+                / (self
+                    .canvas_state_resource
                     .read_canvas_state(|canvas_state| canvas_state.transform.scaling));
-            graph_resource.with_graph(|graph| {
+            self.graph_resource.with_graph(|graph| {
                 let node = graph.get_node_mut(self.node_index).unwrap();
                 node.position += drag_delta;
-                let render_info = NodeRenderInfo {
-                    screen_rect: response.rect,
-                    screen_center: response.rect.center(),
-                };
-                node.render_info = Some(render_info);
+                // let canvas_rect = self
+                //     .canvas_state_resource
+                //     .read_canvas_state(|canvas_state| canvas_state.to_canvas_rect(response.rect));
+                // let render_info = NodeRenderInfo { canvas_rect };
+                // node.render_info = Some(render_info);
             });
         }
     }
 
     fn handle_secondary_drag(&mut self, ui: &mut egui::Ui, response: &egui::Response) {
-        let graph_resource: GraphResource = ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
-        let canvas_state_resource: CanvasStateResource =
-            ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
-
+        // 处理右键拖动
         // 处理右键拖动
         if ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary))
             && response.hovered()
         {
             println!("right button drag started");
             let mouse_screen_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
-            let mouse_canvas_pos = canvas_state_resource
+            let mouse_canvas_pos = self
+                .canvas_state_resource
                 .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
-            let node_screen_rect = graph_resource.read_graph(|graph| {
-                graph
-                    .get_node(self.node_index)
-                    .unwrap()
-                    .render_info
-                    .as_ref()
-                    .unwrap()
-                    .screen_rect
-            });
-            let node_canvas_center = canvas_state_resource.read_canvas_state(|canvas_state| {
-                canvas_state.to_canvas(node_screen_rect.center())
-            });
+            let node_render_info: NodeRenderInfo = ui
+                .ctx()
+                .data(|d| d.get_temp(Id::new(self.node_index.index().to_string())))
+                .unwrap();
+
+            let node_canvas_center = node_render_info.canvas_center();
             // let canvas_pos = canvas_state_resource
             //     .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
 
@@ -135,7 +133,7 @@ impl NodeWidget {
                 source: self.node_index,
                 target: TempEdgeTarget::Point(mouse_canvas_pos),
             };
-            graph_resource.with_graph(|graph| {
+            self.graph_resource.with_graph(|graph| {
                 graph.set_temp_edge(None);
                 graph.set_temp_edge(Some(temp_edge));
             });
@@ -148,22 +146,17 @@ impl NodeWidget {
             println!("right button dragging");
             let mouse_screen_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
             println!("mouse_screen_pos: {:?}", mouse_screen_pos);
-            let node_screen_rect = graph_resource.read_graph(|graph| {
-                graph
-                    .get_node(self.node_index)
-                    .unwrap()
-                    .render_info
-                    .as_ref()
-                    .unwrap()
-                    .screen_rect
-            });
-            let node_canvas_center = canvas_state_resource.read_canvas_state(|canvas_state| {
-                canvas_state.to_canvas(node_screen_rect.center())
-            });
-            graph_resource.with_graph(|graph| {
+            let node_render_info: NodeRenderInfo = ui
+                .ctx()
+                .data(|d| d.get_temp(Id::new(self.node_index.index().to_string())))
+                .unwrap();
+
+            let node_canvas_center = node_render_info.canvas_center();
+            self.graph_resource.with_graph(|graph| {
                 let temp_edge = graph.get_temp_edge();
                 println!("====temp_edge: {:?}====", temp_edge);
-                let mouse_canvas_pos = canvas_state_resource
+                let mouse_canvas_pos = self
+                    .canvas_state_resource
                     .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
                 println!("====mouse_canvas_pos: {:?}====", mouse_canvas_pos);
                 if let Some(temp_edge_clone) = temp_edge.clone() {
@@ -196,25 +189,20 @@ impl NodeWidget {
         if ui.input(|i| i.pointer.button_released(egui::PointerButton::Secondary)) {
             // if response.drag_stopped_by(egui::PointerButton::Secondary) {
             let mouse_screen_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
-            let mouse_canvas_pos = canvas_state_resource
+            let mouse_canvas_pos = self
+                .canvas_state_resource
                 .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
             println!("right button drag stopped");
             // 创建新的节点，并创建边
-            let node_screen_rect = graph_resource.read_graph(|graph| {
-                graph
-                    .get_node(self.node_index)
-                    .unwrap()
-                    .render_info
-                    .as_ref()
-                    .unwrap()
-                    .screen_rect
-            });
-            let node_canvas_center = canvas_state_resource.read_canvas_state(|canvas_state| {
-                canvas_state.to_canvas(node_screen_rect.center())
-            });
+            let node_render_info: NodeRenderInfo = ui
+                .ctx()
+                .data(|d| d.get_temp(Id::new(self.node_index.index().to_string())))
+                .unwrap();
+            let node_canvas_center = node_render_info.canvas_center();
 
-            let new_node_id =
-                canvas_state_resource.read_canvas_state(|canvas_state| canvas_state.new_node_id());
+            let new_node_id = self
+                .canvas_state_resource
+                .read_canvas_state(|canvas_state| canvas_state.new_node_id());
             let new_node = Node {
                 id: new_node_id,
                 text: String::new(),
@@ -222,8 +210,9 @@ impl NodeWidget {
                 position: mouse_canvas_pos,
                 render_info: None,
             };
-            let new_edge_id =
-                canvas_state_resource.read_canvas_state(|canvas_state| canvas_state.new_edge_id());
+            let new_edge_id = self
+                .canvas_state_resource
+                .read_canvas_state(|canvas_state| canvas_state.new_edge_id());
             let new_edge = Edge {
                 id: new_edge_id,
                 source: self.node_index,
@@ -235,7 +224,7 @@ impl NodeWidget {
                     control_anchors: vec![],
                 }),
             };
-            graph_resource.with_graph(|graph| {
+            self.graph_resource.with_graph(|graph| {
                 let node_index = graph.add_node(new_node);
                 graph.set_selected_node(Some(node_index));
                 graph.set_editing_node(Some(node_index));
@@ -252,12 +241,10 @@ impl NodeWidget {
 
 impl Widget for NodeWidget {
     fn ui(mut self, ui: &mut egui::Ui) -> egui::Response {
-        let graph_resource: GraphResource = ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
-        let canvas_state_resource: CanvasStateResource =
-            ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
-
         // 对缩放比例进行区间化
-        let scale_level = (canvas_state_resource
+        // 对缩放比例进行区间化
+        let scale_level = (self
+            .canvas_state_resource
             .read_canvas_state(|canvas_state| canvas_state.transform.scaling)
             * 10.0)
             .ceil()
@@ -265,7 +252,7 @@ impl Widget for NodeWidget {
         // let node = self.graph.get_node_mut(self.node_id).unwrap();
 
         let text = {
-            graph_resource.with_graph(|graph| {
+            self.graph_resource.with_graph(|graph| {
                 let node = graph.get_node(self.node_index).unwrap();
                 format!("{}", node.text)
             })
@@ -289,9 +276,9 @@ impl Widget for NodeWidget {
         );
 
         let screen_pos = {
-            graph_resource.with_graph(|graph| {
+            self.graph_resource.with_graph(|graph| {
                 let node = graph.get_node(self.node_index).unwrap();
-                canvas_state_resource
+                self.canvas_state_resource
                     .read_canvas_state(|canvas_state| canvas_state.to_screen(node.position))
             })
         };
@@ -321,7 +308,10 @@ impl Widget for NodeWidget {
             // let stroke_width = 3.0 * canvas_state.scale;
             let stroke_width = 1.0;
 
-            if graph_resource.read_graph(|graph| graph.get_selected_node()) == Some(self.node_index)
+            if self
+                .graph_resource
+                .read_graph(|graph| graph.get_selected_node())
+                == Some(self.node_index)
             {
                 painter.rect(
                     selected_rect,
@@ -341,10 +331,13 @@ impl Widget for NodeWidget {
             // 根据rect计算文本位置，使得文本居中
             let text_pos = rect.center();
 
-            if graph_resource.read_graph(|graph| graph.get_editing_node()) == Some(self.node_index)
+            if self
+                .graph_resource
+                .read_graph(|graph| graph.get_editing_node())
+                == Some(self.node_index)
             {
                 let mut text = {
-                    graph_resource.with_graph(|graph| {
+                    self.graph_resource.with_graph(|graph| {
                         let node = graph.get_node(self.node_index).unwrap();
                         format!("{}", node.text)
                     })
@@ -374,7 +367,7 @@ impl Widget for NodeWidget {
                 // }
 
                 edit_response.request_focus();
-                graph_resource.with_graph(|graph| {
+                self.graph_resource.with_graph(|graph| {
                     let node = graph.get_node_mut(self.node_index).unwrap();
                     node.text = text;
                 });
@@ -392,14 +385,18 @@ impl Widget for NodeWidget {
             // 在右上角绘制节点ID
             self.draw_node_id(ui, &response);
 
-            let render_info = NodeRenderInfo {
-                screen_rect: rect,
-                screen_center: rect.center(),
-            };
-            graph_resource.with_graph(|graph| {
-                let node = graph.get_node_mut(self.node_index).unwrap();
-                node.render_info = Some(render_info);
+            let canvas_rect = self
+                .canvas_state_resource
+                .read_canvas_state(|canvas_state| canvas_state.to_canvas_rect(rect));
+            let render_info = NodeRenderInfo { canvas_rect };
+
+            ui.ctx().data_mut(|d| {
+                d.insert_temp(Id::new(self.node_index.index().to_string()), render_info)
             });
+            // self.graph_resource.with_graph(|graph| {
+            //     let node = graph.get_node_mut(self.node_index).unwrap();
+            //     node.render_info = Some(render_info);
+            // });
         };
 
         response
@@ -411,9 +408,8 @@ impl Widget for NodeWidget {
 
 impl NodeWidget {
     fn draw_node_id(&self, ui: &mut egui::Ui, node_response: &egui::Response) {
-        let canvas_state_resource: CanvasStateResource =
-            ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
-        let scale_level = (canvas_state_resource
+        let scale_level = (self
+            .canvas_state_resource
             .read_canvas_state(|canvas_state| canvas_state.transform.scaling)
             * 10.0)
             .ceil()

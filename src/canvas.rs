@@ -51,6 +51,10 @@ impl CanvasState {
         self.transform.mul_rect(canvas_rect)
     }
 
+    pub fn to_canvas_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
+        self.transform.inverse().mul_rect(screen_rect)
+    }
+
     /// 将"屏幕坐标"转换回"画布坐标"（如需在鼠标点击时计算画布内的点）
     pub fn to_canvas(&self, screen_pos: egui::Pos2) -> egui::Pos2 {
         // (screen_pos - self.offset) / self.scale

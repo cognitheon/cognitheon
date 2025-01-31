@@ -9,6 +9,11 @@ pub struct Node {
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct NodeRenderInfo {
-    pub screen_rect: egui::Rect,
-    pub screen_center: egui::Pos2,
+    pub canvas_rect: egui::Rect,
+}
+
+impl NodeRenderInfo {
+    pub fn canvas_center(&self) -> egui::Pos2 {
+        self.canvas_rect.center()
+    }
 }
