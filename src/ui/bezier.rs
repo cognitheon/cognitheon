@@ -1,6 +1,6 @@
 use egui::*;
 
-use crate::{global::CanvasStateResource, graph::node::NodeRenderInfo};
+use crate::global::CanvasStateResource;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Anchor {
@@ -71,6 +71,20 @@ pub struct BezierEdge {
     pub source_anchor: Anchor,
     pub target_anchor: Anchor,
     pub control_anchors: Vec<Anchor>,
+}
+
+impl BezierEdge {
+    pub fn new(source: Anchor, target: Anchor) -> Self {
+        Self {
+            source_anchor: source,
+            target_anchor: target,
+            control_anchors: vec![],
+        }
+    }
+
+    pub fn update_control_anchors(&mut self, control_anchors: Vec<Anchor>) {
+        self.control_anchors = control_anchors;
+    }
 }
 
 pub struct BezierWidget {

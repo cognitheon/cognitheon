@@ -4,9 +4,10 @@ pub mod node_render_info;
 
 use crate::global::{CanvasStateResource, GraphResource};
 use crate::graph::node::Node;
-use crate::ui::temp_edge::TempEdge;
-use edge::Edge;
-use egui::Id;
+use crate::ui::bezier::BezierEdge;
+use crate::ui::edge::EdgeWidget;
+use crate::ui::line_edge::LineEdge;
+use edge::{Edge, EdgeType};
 use petgraph::graph::{EdgeIndex, NodeIndex};
 
 use crate::ui::node::NodeWidget;
@@ -14,19 +15,19 @@ use crate::ui::node::NodeWidget;
 // #[typetag::serde(tag = "type")]
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Graph {
+    pub edge_type: EdgeType,
     pub graph: petgraph::stable_graph::StableGraph<Node, Edge>,
     pub selected_node: Option<NodeIndex>,
     pub editing_node: Option<NodeIndex>,
-    pub temp_edge: Option<TempEdge>,
 }
 
 impl Default for Graph {
     fn default() -> Self {
         Self {
+            edge_type: EdgeType::Line,
             graph: petgraph::stable_graph::StableGraph::new(),
             selected_node: None,
             editing_node: None,
-            temp_edge: None,
         }
     }
 }
@@ -74,19 +75,26 @@ impl Graph {
         self.graph.add_edge(edge.source, edge.target, edge);
     }
 
-    pub fn set_temp_edge(&mut self, temp_edge: Option<TempEdge>) {
-        if let Some(temp_edge_clone) = temp_edge.clone() {
-            println!("set_temp_edge: {:?}", temp_edge_clone.target);
-        }
-        self.temp_edge = temp_edge;
+    pub fn get_edge(&self, edge_index: EdgeIndex) -> Option<&Edge> {
+        self.graph.edge_weight(edge_index)
     }
 
-    // 返回创建的临时边
-    pub fn get_temp_edge(&self) -> Option<TempEdge> {
-        if let Some(temp_edge) = self.temp_edge.clone() {
-            println!("get_temp_edge: {:?}", temp_edge.target);
-        }
-        self.temp_edge.clone()
+    pub fn remove_edge(&mut self, edge_index: EdgeIndex) {
+        self.graph.remove_edge(edge_index);
+    }
+
+    pub fn update_bezier_edge(&mut self, edge_index: EdgeIndex, bezier_edge: BezierEdge) {
+        let edge = self.graph.edge_weight_mut(edge_index).unwrap();
+        edge.bezier_edge = bezier_edge;
+    }
+
+    pub fn update_line_edge(&mut self, edge_index: EdgeIndex, line_edge: LineEdge) {
+        let edge = self.graph.edge_weight_mut(edge_index).unwrap();
+        edge.line_edge = line_edge;
+    }
+
+    pub fn edge_exists(&self, src_node_index: NodeIndex, dst_node_index: NodeIndex) -> bool {
+        self.graph.contains_edge(src_node_index, dst_node_index)
     }
 }
 
@@ -126,11 +134,11 @@ pub fn render_graph(
         });
     }
 
-    // for edge_index in edge_indices {
-    //     ui.add(EdgeWidget {
-    //         edge_index,
-    //         // graph,
-    //         // canvas_state,
-    //     });
-    // }
+    for edge_index in edge_indices {
+        ui.add(EdgeWidget {
+            edge_index,
+            graph_resource: graph_resource.clone(),
+            canvas_state_resource: canvas_state_resource.clone(),
+        });
+    }
 }

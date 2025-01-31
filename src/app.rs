@@ -1,14 +1,10 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use egui::Id;
-
-use crate::canvas::CanvasState;
 use crate::global::{CanvasStateResource, GraphResource};
-use crate::graph::Graph;
 use crate::ui::canvas::CanvasWidget;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct TemplateApp {
     // Example stuff:
@@ -37,36 +33,6 @@ impl Default for TemplateApp {
     }
 }
 
-fn setup_font(ctx: &egui::Context) {
-    let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert(
-        "source_hans_sans".to_owned(),
-        Arc::new(egui::FontData::from_static(include_bytes!(
-            "../assets/SourceHanSansSC-Regular.otf"
-        ))),
-    );
-    fonts
-        .families
-        .entry(egui::FontFamily::Proportional)
-        .or_default()
-        .insert(0, "source_hans_sans".to_owned());
-
-    fonts
-        .families
-        .entry(egui::FontFamily::Monospace)
-        .or_default()
-        .insert(0, "source_hans_sans".to_owned());
-
-    // 在插入字体后添加调试输出
-    println!(
-        "Font data size: {:?} bytes",
-        fonts.font_data["source_hans_sans"].font.len()
-    );
-
-    // Tell egui to use these fonts:
-    ctx.set_fonts(fonts);
-}
-
 impl TemplateApp {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -79,18 +45,12 @@ impl TemplateApp {
         //     return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
         // }
         setup_font(&cc.egui_ctx);
-        let graph = Graph::default();
-        let graph_resource = GraphResource(Arc::new(RwLock::new(graph)));
-        let canvas_state_resource =
-            CanvasStateResource(Arc::new(RwLock::new(CanvasState::default())));
-
-        cc.egui_ctx.data_mut(|data| {
-            data.insert_persisted(Id::NULL, graph_resource);
-            data.insert_temp(Id::NULL, canvas_state_resource);
-        });
 
         if let Some(storage) = cc.storage {
-            return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+            println!("load");
+            let app = eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+            println!("app: {:?}", app);
+            return app;
         }
 
         Default::default()
@@ -109,6 +69,8 @@ impl TemplateApp {
 impl eframe::App for TemplateApp {
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        println!("save");
+        println!("self: {:?}", self);
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
@@ -152,8 +114,8 @@ impl eframe::App for TemplateApp {
                 powered_by_egui_and_eframe(ui);
                 egui::warn_if_debug_build(ui);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::LEFT), |ui| {
-                    current_zoom(ui);
-                    current_offset(ui);
+                    current_zoom(ui, &self.canvas_resource);
+                    current_offset(ui, &self.canvas_resource);
                 });
             });
         });
@@ -174,10 +136,8 @@ fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
     });
 }
 
-fn current_zoom(ui: &mut egui::Ui) {
+fn current_zoom(ui: &mut egui::Ui, canvas_state_resource: &CanvasStateResource) {
     // 获取当前缩放
-    let canvas_state_resource: CanvasStateResource =
-        ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
     canvas_state_resource.read_canvas_state(|canvas_state| {
         ui.label(format!("zoom: {:.2}", canvas_state.transform.scaling));
     });
@@ -185,10 +145,38 @@ fn current_zoom(ui: &mut egui::Ui) {
     // ui.label(format!("zoom: {}", canvas_state.scale));
 }
 
-fn current_offset(ui: &mut egui::Ui) {
-    let canvas_state_resource: CanvasStateResource =
-        ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
+fn current_offset(ui: &mut egui::Ui, canvas_state_resource: &CanvasStateResource) {
     canvas_state_resource.read_canvas_state(|canvas_state| {
         ui.label(format!("offset: {:?}", canvas_state.transform.translation));
     });
+}
+
+fn setup_font(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "source_hans_sans".to_owned(),
+        Arc::new(egui::FontData::from_static(include_bytes!(
+            "../assets/SourceHanSansSC-Regular.otf"
+        ))),
+    );
+    fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(0, "source_hans_sans".to_owned());
+
+    fonts
+        .families
+        .entry(egui::FontFamily::Monospace)
+        .or_default()
+        .insert(0, "source_hans_sans".to_owned());
+
+    // 在插入字体后添加调试输出
+    println!(
+        "Font data size: {:?} bytes",
+        fonts.font_data["source_hans_sans"].font.len()
+    );
+
+    // Tell egui to use these fonts:
+    ctx.set_fonts(fonts);
 }

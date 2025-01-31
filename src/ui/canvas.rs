@@ -1,4 +1,4 @@
-use std::sync::atomic::Ordering;
+use std::{f32::consts::E, sync::atomic::Ordering};
 
 use egui::{emath::TSTransform, Id, PointerButton, Widget};
 use petgraph::graph::NodeIndex;
@@ -6,7 +6,7 @@ use petgraph::graph::NodeIndex;
 use crate::{
     global::{CanvasStateResource, GraphResource},
     graph::{
-        edge::EdgeType,
+        edge::{Edge, EdgeType},
         node::{Node, NodeRenderInfo},
     },
 };
@@ -14,9 +14,11 @@ use crate::{
 use super::{
     bezier::{Anchor, BezierEdge},
     helpers::draw_grid,
+    line_edge::LineEdge,
     temp_edge::{TempEdge, TempEdgeTarget, TempEdgeWidget},
 };
 
+#[derive(Debug)]
 pub struct CanvasWidget {
     temp_edge: Option<TempEdge>,
     graph_resource: GraphResource,
@@ -74,11 +76,15 @@ impl CanvasWidget {
         Some(TempEdge {
             source: node_index,
             target: TempEdgeTarget::Point(mouse_canvas_pos),
-            edge_type: EdgeType::Bezier(BezierEdge {
+            bezier_edge: BezierEdge {
                 source_anchor: Anchor::new_smooth(node_canvas_center),
                 target_anchor: Anchor::new_smooth(mouse_canvas_pos),
                 control_anchors: vec![],
-            }),
+            },
+            line_edge: LineEdge {
+                source: Anchor::new_smooth(node_canvas_center),
+                target: Anchor::new_smooth(mouse_canvas_pos),
+            },
         })
     }
 
@@ -120,17 +126,18 @@ impl CanvasWidget {
                         let source_canvas_center = node_render_info.canvas_center();
                         // println!("source_canvas_center: {:?}", source_canvas_center);
 
-                        let mut control_anchors = vec![];
-                        if let EdgeType::Bezier(bezier) = &temp_edge.edge_type {
-                            control_anchors = bezier.control_anchors.clone();
-                        }
+                        let control_anchors = temp_edge.bezier_edge.control_anchors.clone();
 
                         temp_edge.target = TempEdgeTarget::Point(mouse_canvas_pos);
-                        temp_edge.edge_type = EdgeType::Bezier(BezierEdge {
+                        temp_edge.bezier_edge = BezierEdge {
                             source_anchor: Anchor::new_smooth(source_canvas_center),
                             target_anchor: Anchor::new_smooth(mouse_canvas_pos),
                             control_anchors,
-                        });
+                        };
+                        temp_edge.line_edge = LineEdge {
+                            source: Anchor::new_smooth(source_canvas_center),
+                            target: Anchor::new_smooth(mouse_canvas_pos),
+                        };
                     }
                 }
             }
@@ -141,12 +148,43 @@ impl CanvasWidget {
         if right_released && self.temp_edge.is_some() {
             // Check if we released on another node
             if let Some(mouse_screen_pos) = ui.input(|i| i.pointer.hover_pos()) {
-                if let Some(target_index) = self.hit_test_node(ui, mouse_screen_pos) {
+                if let Some(target_node_index) = self.hit_test_node(ui, mouse_screen_pos) {
                     // If you want to finalize an edge from self.right_drag_node to target_index
                     println!(
                         "Released on a node: {:?}. Connect source -> target?",
-                        target_index
+                        target_node_index
                     );
+                    let source_node_index = self.temp_edge.as_ref().unwrap().source;
+
+                    let edge_exists = self.graph_resource.read_graph(|graph| {
+                        graph.edge_exists(source_node_index, target_node_index)
+                    });
+                    if !edge_exists {
+                        let (source_canvas_pos, target_canvas_pos) = ui.ctx().data(|d| {
+                            let source_node_render_info: NodeRenderInfo = d
+                                .get_temp(Id::new(source_node_index.index().to_string()))
+                                .unwrap();
+                            let target_node_render_info: NodeRenderInfo = d
+                                .get_temp(Id::new(target_node_index.index().to_string()))
+                                .unwrap();
+                            (
+                                source_node_render_info.canvas_center(),
+                                target_node_render_info.canvas_center(),
+                            )
+                        });
+
+                        let edge = Edge::new(
+                            source_node_index,
+                            target_node_index,
+                            source_canvas_pos,
+                            target_canvas_pos,
+                            self.canvas_state_resource.clone(),
+                        );
+
+                        self.graph_resource.with_graph(|graph| {
+                            graph.add_edge(edge);
+                        });
+                    }
                 } else {
                     // Released on empty space, create a node or do nothing
                     println!("Released on empty space. Maybe create a new node?");

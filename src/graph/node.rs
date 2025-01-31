@@ -1,3 +1,5 @@
+use crate::global::CanvasStateResource;
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Node {
     pub id: u64,
@@ -15,5 +17,9 @@ pub struct NodeRenderInfo {
 impl NodeRenderInfo {
     pub fn canvas_center(&self) -> egui::Pos2 {
         self.canvas_rect.center()
+    }
+
+    pub fn screen_rect(&self, canvas_state: &CanvasStateResource) -> egui::Rect {
+        canvas_state.read_canvas_state(|canvas_state| canvas_state.to_screen_rect(self.canvas_rect))
     }
 }

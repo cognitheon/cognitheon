@@ -102,141 +102,141 @@ impl NodeWidget {
         }
     }
 
-    fn handle_secondary_drag(&mut self, ui: &mut egui::Ui, response: &egui::Response) {
-        // 处理右键拖动
-        // 处理右键拖动
-        if ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary))
-            && response.hovered()
-        {
-            println!("right button drag started");
-            let mouse_screen_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
-            let mouse_canvas_pos = self
-                .canvas_state_resource
-                .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
-            let node_render_info: NodeRenderInfo = ui
-                .ctx()
-                .data(|d| d.get_temp(Id::new(self.node_index.index().to_string())))
-                .unwrap();
+    // fn handle_secondary_drag(&mut self, ui: &mut egui::Ui, response: &egui::Response) {
+    //     // 处理右键拖动
+    //     // 处理右键拖动
+    //     if ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary))
+    //         && response.hovered()
+    //     {
+    //         println!("right button drag started");
+    //         let mouse_screen_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
+    //         let mouse_canvas_pos = self
+    //             .canvas_state_resource
+    //             .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
+    //         let node_render_info: NodeRenderInfo = ui
+    //             .ctx()
+    //             .data(|d| d.get_temp(Id::new(self.node_index.index().to_string())))
+    //             .unwrap();
 
-            let node_canvas_center = node_render_info.canvas_center();
-            // let canvas_pos = canvas_state_resource
-            //     .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
+    //         let node_canvas_center = node_render_info.canvas_center();
+    //         // let canvas_pos = canvas_state_resource
+    //         //     .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
 
-            // if let Some(node_index) = self.hit_test(ui, mouse_screen_pos) {
-            // 创建临时边
-            let temp_edge = TempEdge {
-                edge_type: EdgeType::Bezier(BezierEdge {
-                    source_anchor: Anchor::new_smooth(node_canvas_center),
-                    target_anchor: Anchor::new_smooth(mouse_canvas_pos),
-                    control_anchors: vec![],
-                }),
-                source: self.node_index,
-                target: TempEdgeTarget::Point(mouse_canvas_pos),
-            };
-            self.graph_resource.with_graph(|graph| {
-                graph.set_temp_edge(None);
-                graph.set_temp_edge(Some(temp_edge));
-            });
-            // }
-            // });
-        }
+    //         // if let Some(node_index) = self.hit_test(ui, mouse_screen_pos) {
+    //         // 创建临时边
+    //         let temp_edge = TempEdge {
+    //             edge_type: EdgeType::Bezier(BezierEdge {
+    //                 source_anchor: Anchor::new_smooth(node_canvas_center),
+    //                 target_anchor: Anchor::new_smooth(mouse_canvas_pos),
+    //                 control_anchors: vec![],
+    //             }),
+    //             source: self.node_index,
+    //             target: TempEdgeTarget::Point(mouse_canvas_pos),
+    //         };
+    //         self.graph_resource.with_graph(|graph| {
+    //             graph.set_temp_edge(None);
+    //             graph.set_temp_edge(Some(temp_edge));
+    //         });
+    //         // }
+    //         // });
+    //     }
 
-        if ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary)) {
-            // if response.dragged_by(egui::PointerButton::Secondary) {
-            println!("right button dragging");
-            let mouse_screen_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
-            println!("mouse_screen_pos: {:?}", mouse_screen_pos);
-            let node_render_info: NodeRenderInfo = ui
-                .ctx()
-                .data(|d| d.get_temp(Id::new(self.node_index.index().to_string())))
-                .unwrap();
+    //     if ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary)) {
+    //         // if response.dragged_by(egui::PointerButton::Secondary) {
+    //         println!("right button dragging");
+    //         let mouse_screen_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
+    //         println!("mouse_screen_pos: {:?}", mouse_screen_pos);
+    //         let node_render_info: NodeRenderInfo = ui
+    //             .ctx()
+    //             .data(|d| d.get_temp(Id::new(self.node_index.index().to_string())))
+    //             .unwrap();
 
-            let node_canvas_center = node_render_info.canvas_center();
-            self.graph_resource.with_graph(|graph| {
-                let temp_edge = graph.get_temp_edge();
-                println!("====temp_edge: {:?}====", temp_edge);
-                let mouse_canvas_pos = self
-                    .canvas_state_resource
-                    .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
-                println!("====mouse_canvas_pos: {:?}====", mouse_canvas_pos);
-                if let Some(temp_edge_clone) = temp_edge.clone() {
-                    let control_anchors =
-                        if let EdgeType::Bezier(bezier_edge) = temp_edge_clone.edge_type {
-                            bezier_edge.control_anchors
-                        } else {
-                            vec![]
-                        };
-                    // 更新临时边目标坐标
-                    let new_temp_edge = TempEdge {
-                        source: temp_edge_clone.source,
-                        target: TempEdgeTarget::Point(mouse_canvas_pos),
-                        edge_type: EdgeType::Bezier(BezierEdge {
-                            source_anchor: Anchor::new_smooth(node_canvas_center),
-                            target_anchor: Anchor::new_smooth(mouse_canvas_pos),
-                            control_anchors,
-                        }),
-                    };
-                    graph.set_temp_edge(Some(new_temp_edge));
-                }
-            });
-            // println!("mouse_screen_pos: {:?}", mouse_screen_pos);
-        }
-        // println!(
-        //     "NodeWidget::setup_actions: {:?}",
-        //     ui.input(|i| i.pointer.hover_pos())
-        // );
+    //         let node_canvas_center = node_render_info.canvas_center();
+    //         self.graph_resource.with_graph(|graph| {
+    //             let temp_edge = graph.get_temp_edge();
+    //             println!("====temp_edge: {:?}====", temp_edge);
+    //             let mouse_canvas_pos = self
+    //                 .canvas_state_resource
+    //                 .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
+    //             println!("====mouse_canvas_pos: {:?}====", mouse_canvas_pos);
+    //             if let Some(temp_edge_clone) = temp_edge.clone() {
+    //                 let control_anchors =
+    //                     if let EdgeType::Bezier(bezier_edge) = temp_edge_clone.edge_type {
+    //                         bezier_edge.control_anchors
+    //                     } else {
+    //                         vec![]
+    //                     };
+    //                 // 更新临时边目标坐标
+    //                 let new_temp_edge = TempEdge {
+    //                     source: temp_edge_clone.source,
+    //                     target: TempEdgeTarget::Point(mouse_canvas_pos),
+    //                     edge_type: EdgeType::Bezier(BezierEdge {
+    //                         source_anchor: Anchor::new_smooth(node_canvas_center),
+    //                         target_anchor: Anchor::new_smooth(mouse_canvas_pos),
+    //                         control_anchors,
+    //                     }),
+    //                 };
+    //                 graph.set_temp_edge(Some(new_temp_edge));
+    //             }
+    //         });
+    //         // println!("mouse_screen_pos: {:?}", mouse_screen_pos);
+    //     }
+    //     // println!(
+    //     //     "NodeWidget::setup_actions: {:?}",
+    //     //     ui.input(|i| i.pointer.hover_pos())
+    //     // );
 
-        if ui.input(|i| i.pointer.button_released(egui::PointerButton::Secondary)) {
-            // if response.drag_stopped_by(egui::PointerButton::Secondary) {
-            let mouse_screen_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
-            let mouse_canvas_pos = self
-                .canvas_state_resource
-                .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
-            println!("right button drag stopped");
-            // 创建新的节点，并创建边
-            let node_render_info: NodeRenderInfo = ui
-                .ctx()
-                .data(|d| d.get_temp(Id::new(self.node_index.index().to_string())))
-                .unwrap();
-            let node_canvas_center = node_render_info.canvas_center();
+    //     if ui.input(|i| i.pointer.button_released(egui::PointerButton::Secondary)) {
+    //         // if response.drag_stopped_by(egui::PointerButton::Secondary) {
+    //         let mouse_screen_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
+    //         let mouse_canvas_pos = self
+    //             .canvas_state_resource
+    //             .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
+    //         println!("right button drag stopped");
+    //         // 创建新的节点，并创建边
+    //         let node_render_info: NodeRenderInfo = ui
+    //             .ctx()
+    //             .data(|d| d.get_temp(Id::new(self.node_index.index().to_string())))
+    //             .unwrap();
+    //         let node_canvas_center = node_render_info.canvas_center();
 
-            let new_node_id = self
-                .canvas_state_resource
-                .read_canvas_state(|canvas_state| canvas_state.new_node_id());
-            let new_node = Node {
-                id: new_node_id,
-                text: String::new(),
-                note: String::new(),
-                position: mouse_canvas_pos,
-                render_info: None,
-            };
-            let new_edge_id = self
-                .canvas_state_resource
-                .read_canvas_state(|canvas_state| canvas_state.new_edge_id());
-            let new_edge = Edge {
-                id: new_edge_id,
-                source: self.node_index,
-                target: NodeIndex::new(new_node_id.try_into().unwrap()),
-                text: None,
-                edge_type: EdgeType::Bezier(BezierEdge {
-                    source_anchor: Anchor::new_smooth(node_canvas_center),
-                    target_anchor: Anchor::new_smooth(mouse_canvas_pos),
-                    control_anchors: vec![],
-                }),
-            };
-            self.graph_resource.with_graph(|graph| {
-                let node_index = graph.add_node(new_node);
-                graph.set_selected_node(Some(node_index));
-                graph.set_editing_node(Some(node_index));
-                graph.add_edge(new_edge);
-                graph.set_temp_edge(None);
-            });
+    //         let new_node_id = self
+    //             .canvas_state_resource
+    //             .read_canvas_state(|canvas_state| canvas_state.new_node_id());
+    //         let new_node = Node {
+    //             id: new_node_id,
+    //             text: String::new(),
+    //             note: String::new(),
+    //             position: mouse_canvas_pos,
+    //             render_info: None,
+    //         };
+    //         let new_edge_id = self
+    //             .canvas_state_resource
+    //             .read_canvas_state(|canvas_state| canvas_state.new_edge_id());
+    //         let new_edge = Edge {
+    //             id: new_edge_id,
+    //             source: self.node_index,
+    //             target: NodeIndex::new(new_node_id.try_into().unwrap()),
+    //             text: None,
+    //             edge_type: EdgeType::Bezier(BezierEdge {
+    //                 source_anchor: Anchor::new_smooth(node_canvas_center),
+    //                 target_anchor: Anchor::new_smooth(mouse_canvas_pos),
+    //                 control_anchors: vec![],
+    //             }),
+    //         };
+    //         self.graph_resource.with_graph(|graph| {
+    //             let node_index = graph.add_node(new_node);
+    //             graph.set_selected_node(Some(node_index));
+    //             graph.set_editing_node(Some(node_index));
+    //             graph.add_edge(new_edge);
+    //             graph.set_temp_edge(None);
+    //         });
 
-            // graph_resource.with_graph(|graph| {
-            //     graph.set_temp_edge(None);
-            // });
-        }
-    }
+    //         // graph_resource.with_graph(|graph| {
+    //         //     graph.set_temp_edge(None);
+    //         // });
+    //     }
+    // }
 }
 
 impl Widget for NodeWidget {
