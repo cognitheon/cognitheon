@@ -9,19 +9,11 @@ use crate::{
 
 use super::{helpers::draw_grid, temp_edge::TempEdgeWidget};
 
-pub struct CanvasWidget {
-    // pub canvas_state: &'a mut CanvasState,
-    // pub graph: &'a mut Graph,
-    global_node_id: AtomicU64,
-}
+pub struct CanvasWidget {}
 
 impl CanvasWidget {
     pub fn new() -> Self {
-        Self {
-            // canvas_state,
-            // graph,
-            global_node_id: AtomicU64::new(0),
-        }
+        Self {}
     }
 
     // pub fn hit_test(&self, ui: &mut egui::Ui, screen_pos: egui::Pos2) -> Option<NodeIndex> {
@@ -45,7 +37,7 @@ impl CanvasWidget {
     //     })
     // }
 
-    pub fn configure_actions(&mut self, ui: &mut egui::Ui, canvas_response: &egui::Response) {
+    pub fn setup_actions(&mut self, ui: &mut egui::Ui, canvas_response: &egui::Response) {
         let canvas_state_resource: CanvasStateResource =
             ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
 
@@ -222,7 +214,7 @@ impl Widget for CanvasWidget {
         crate::graph::render_graph(ui);
         // });
 
-        self.configure_actions(ui, &canvas_response);
+        self.setup_actions(ui, &canvas_response);
 
         canvas_response
     }

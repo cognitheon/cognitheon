@@ -7,7 +7,7 @@ use crate::graph::node::Node;
 use crate::ui::temp_edge::TempEdge;
 use edge::Edge;
 use egui::Id;
-use petgraph::graph::NodeIndex;
+use petgraph::graph::{EdgeIndex, NodeIndex};
 
 use crate::ui::node::NodeWidget;
 
@@ -103,6 +103,14 @@ pub fn render_graph(ui: &mut egui::Ui) {
             .collect::<Vec<NodeIndex>>()
     });
 
+    let edge_indices = graph_resource.read_graph(|graph| {
+        graph
+            .graph
+            .edge_indices()
+            .map(|idx| idx)
+            .collect::<Vec<EdgeIndex>>()
+    });
+
     // println!("node_indices: {:?}", node_indices.len());
 
     for node_index in node_indices {
@@ -117,4 +125,12 @@ pub fn render_graph(ui: &mut egui::Ui) {
             // canvas_state,
         });
     }
+
+    // for edge_index in edge_indices {
+    //     ui.add(EdgeWidget {
+    //         edge_index,
+    //         // graph,
+    //         // canvas_state,
+    //     });
+    // }
 }
