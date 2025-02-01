@@ -160,16 +160,6 @@ pub fn draw_grid(ui: &mut egui::Ui, canvas_state: &CanvasState, screen_rect: egu
     //     egui::Stroke::new(2.0, egui::Color32::GREEN),
     // );
 
-    // // 画B样条曲线
-    // let control_points = vec![
-    //     egui::Pos2::new(0.0, 0.0),
-    //     egui::Pos2::new(100.0, 100.0),
-    //     egui::Pos2::new(100.0, 200.0),
-    //     egui::Pos2::new(300.0, 300.0),
-    //     egui::Pos2::new(100.0, 400.0),
-    // ];
-    // let stroke = Stroke::new(2.0, egui::Color32::DARK_RED);
-
     // let degree = 3;
     // let knots: Vec<f32> = (0..=control_points.len() + degree)
     //     .map(|i| i as f32)
