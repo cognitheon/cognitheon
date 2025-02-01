@@ -53,10 +53,7 @@ impl EdgeWidget {
         if edge_count != 1 {
             let offset_dir = edge_offset_direction(src_node_canvas_center, dst_node_canvas_center);
             println!("offset_dir: {:?}", offset_dir);
-            let offset_amount = 10.0
-                * self
-                    .canvas_state_resource
-                    .read_canvas_state(|canvas_state| canvas_state.transform.scaling);
+            let offset_amount = 10.0;
             // let edge_dir = (dst_node_canvas_center - src_node_canvas_center).normalized();
             src_center += offset_dir * offset_amount;
             dst_center += offset_dir * offset_amount;
@@ -171,10 +168,7 @@ impl EdgeWidget {
         if edge_count != 1 {
             let offset_dir = edge_offset_direction(src_node_canvas_center, dst_node_canvas_center);
             println!("offset_dir: {:?}", offset_dir);
-            let offset_amount = 10.0
-                * self
-                    .canvas_state_resource
-                    .read_canvas_state(|canvas_state| canvas_state.transform.scaling);
+            let offset_amount = 10.0;
             src_center += offset_dir * offset_amount;
             dst_center += offset_dir * offset_amount;
         }
