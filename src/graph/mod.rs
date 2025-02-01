@@ -24,7 +24,7 @@ pub struct Graph {
 impl Default for Graph {
     fn default() -> Self {
         Self {
-            edge_type: EdgeType::Line,
+            edge_type: EdgeType::Bezier,
             graph: petgraph::stable_graph::StableGraph::new(),
             selected_node: None,
             editing_node: None,
@@ -121,6 +121,14 @@ pub fn render_graph(
             .collect::<Vec<EdgeIndex>>()
     });
 
+    for edge_index in edge_indices {
+        ui.add(EdgeWidget {
+            edge_index,
+            graph_resource: graph_resource.clone(),
+            canvas_state_resource: canvas_state_resource.clone(),
+        });
+    }
+
     // println!("node_indices: {:?}", node_indices.len());
 
     for node_index in node_indices {
@@ -129,14 +137,6 @@ pub fn render_graph(
 
         ui.add(NodeWidget {
             node_index,
-            graph_resource: graph_resource.clone(),
-            canvas_state_resource: canvas_state_resource.clone(),
-        });
-    }
-
-    for edge_index in edge_indices {
-        ui.add(EdgeWidget {
-            edge_index,
             graph_resource: graph_resource.clone(),
             canvas_state_resource: canvas_state_resource.clone(),
         });

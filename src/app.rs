@@ -1,10 +1,14 @@
+use std::fmt::Debug;
 use std::sync::Arc;
 
+use egui::{ComboBox, Ui};
+
 use crate::global::{CanvasStateResource, GraphResource};
+use crate::graph::edge::EdgeType;
 use crate::ui::canvas::CanvasWidget;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
-#[derive(serde::Deserialize, serde::Serialize, Debug)]
+#[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct TemplateApp {
     // Example stuff:
@@ -12,11 +16,19 @@ pub struct TemplateApp {
 
     #[serde(skip)] // This how you opt-out of serialization of a field
     value: f32,
+    // edge_type: EdgeType,
     canvas_resource: CanvasStateResource,
     graph_resource: GraphResource,
     #[serde(skip)]
     canvas_widget: CanvasWidget,
 }
+
+// impl Debug for TemplateApp {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         write!(f, "{:?}", self.graph_resource)?;
+//         write!(f, "{:?}", self.canvas_resource)
+//     }
+// }
 
 impl Default for TemplateApp {
     fn default() -> Self {
@@ -26,6 +38,7 @@ impl Default for TemplateApp {
             // Example stuff:
             label: "Hello World!".to_owned(),
             value: 2.7,
+            // edge_type: EdgeType::Line,
             canvas_resource: canvas_resource.clone(),
             graph_resource: graph_resource.clone(),
             canvas_widget: CanvasWidget::new(graph_resource.clone(), canvas_resource.clone()),
@@ -49,7 +62,7 @@ impl TemplateApp {
         if let Some(storage) = cc.storage {
             println!("load");
             let app = eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
-            println!("app: {:?}", app);
+            // println!("app: {:?}", app);
             return app;
         }
 
@@ -70,7 +83,7 @@ impl eframe::App for TemplateApp {
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         println!("save");
-        println!("self: {:?}", self);
+        // println!("self: {:?}", self);
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
@@ -102,6 +115,28 @@ impl eframe::App for TemplateApp {
                 if ui.button("test").clicked() {
                     println!("test");
                 }
+
+                let mut edge_type = self
+                    .graph_resource
+                    .read_graph(|graph| graph.edge_type.clone());
+                ComboBox::from_label("Edge Type")
+                    .selected_text(format!("{:?}", edge_type))
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_value(&mut edge_type, EdgeType::Bezier, "Bezier")
+                            .clicked()
+                        {
+                            self.graph_resource
+                                .with_graph(|graph| graph.edge_type = EdgeType::Bezier);
+                        }
+                        if ui
+                            .selectable_value(&mut edge_type, EdgeType::Line, "Line")
+                            .clicked()
+                        {
+                            self.graph_resource
+                                .with_graph(|graph| graph.edge_type = EdgeType::Line);
+                        }
+                    });
             });
         });
 

@@ -1,4 +1,4 @@
-use std::{f32::consts::E, sync::atomic::Ordering};
+use std::sync::atomic::Ordering;
 
 use egui::{emath::TSTransform, Id, PointerButton, Widget};
 use petgraph::graph::NodeIndex;
@@ -6,7 +6,7 @@ use petgraph::graph::NodeIndex;
 use crate::{
     global::{CanvasStateResource, GraphResource},
     graph::{
-        edge::{Edge, EdgeType},
+        edge::Edge,
         node::{Node, NodeRenderInfo},
     },
 };

@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use petgraph::graph::NodeIndex;
 
 use crate::{
@@ -45,8 +47,14 @@ impl Edge {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub enum EdgeType {
     Line,
     Bezier,
+}
+
+impl Display for EdgeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_string())
+    }
 }

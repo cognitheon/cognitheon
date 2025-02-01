@@ -14,7 +14,7 @@ pub struct Anchor {
 impl Anchor {
     // 创建平滑锚点（自动生成对称控制柄）
     pub fn new_smooth(canvas_pos: egui::Pos2) -> Self {
-        let handle_offset = Vec2::new(100.0, 0.0); // 默认水平对称
+        let handle_offset = Vec2::new(30.0, 0.0); // 默认水平对称
         Self {
             canvas_pos,
             handle_in_canvas_pos: canvas_pos - handle_offset,
@@ -75,9 +75,34 @@ pub struct BezierEdge {
 
 impl BezierEdge {
     pub fn new(source: Anchor, target: Anchor) -> Self {
+        let base_offset: f32 = 30.0;
+        // 根据首尾两个锚点的相对位置自动计算两个锚点的控制柄方向
+        let dir = target.canvas_pos - source.canvas_pos;
+        // 如果横向距离大于纵向距离，则认为方向为水平。
+        // 首点的出向与尾点的入向相反。
+        let is_horizontal = dir.x.abs() > dir.y.abs();
+        let handle_offset = if is_horizontal {
+            if dir.x > 0.0 {
+                Vec2::new(base_offset, 0.0)
+            } else {
+                Vec2::new(-base_offset, 0.0)
+            }
+        } else {
+            if dir.y > 0.0 {
+                Vec2::new(0.0, base_offset)
+            } else {
+                Vec2::new(0.0, -base_offset)
+            }
+        };
+        let source_handle_out = source.canvas_pos + handle_offset;
+        let target_handle_in = target.canvas_pos - handle_offset;
+        let new_source_anchor =
+            Anchor::with_handles(source.canvas_pos, source_handle_out, source_handle_out);
+        let new_target_anchor =
+            Anchor::with_handles(target.canvas_pos, target_handle_in, target_handle_in);
         Self {
-            source_anchor: source,
-            target_anchor: target,
+            source_anchor: new_source_anchor,
+            target_anchor: new_target_anchor,
             control_anchors: vec![],
         }
     }
@@ -118,7 +143,7 @@ impl Widget for BezierWidget {
 
         let response = ui.allocate_rect(screen_rect, Sense::click_and_drag());
         self.draw_bezier(ui);
-        // self.apply_actions(&response, ui);
+        self.apply_actions(&response, ui);
         response
     }
 }
@@ -212,24 +237,23 @@ impl BezierWidget {
     }
 
     fn apply_actions(&mut self, response: &egui::Response, ui: &mut Ui) {
-        let canvas_state_resource: CanvasStateResource =
-            ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
-
-        // println!("apply_actions: {:?}", self.dragging);
-
         // 获取鼠标位置（屏幕坐标）
-        let screen_pos = match ui.ctx().input(|i| i.pointer.interact_pos()) {
+        let mouse_screen_pos = match ui.ctx().input(|i| i.pointer.hover_pos()) {
             Some(p) => p,
             None => return,
         };
+
+        // println!("mouse_screen_pos: {:?}", mouse_screen_pos);
         // 转换为世界坐标
-        let world_pos = canvas_state_resource
-            .read_canvas_state(|canvas_state| canvas_state.to_canvas(screen_pos));
+        let mouse_canvas_pos = self
+            .canvas_state_resource
+            .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
         // println!("world_pos: {:?}", world_pos);
+        // println!("response rect: {:?}", response.rect);
         if response.drag_started() {
-            println!("drag begin");
-            if let Some((drag_type, _)) = self.hit_test(world_pos, ui) {
-                println!("drag begin: {:?}", drag_type);
+            println!("bezier drag begin");
+            if let Some((drag_type, _)) = self.hit_test(mouse_canvas_pos) {
+                println!("bezier drag begin: {:?}", drag_type);
                 self.dragging = Some(drag_type);
             }
         }
@@ -244,7 +268,7 @@ impl BezierWidget {
 
         // 处理持续拖动
         if response.dragged() {
-            println!("dragging: {:?}", self.dragging);
+            println!("bezier dragging: {:?}", self.dragging);
             if let Some(drag_type) = &self.dragging {
                 println!("drag_type: {:?}", drag_type);
                 match drag_type {
@@ -268,15 +292,19 @@ impl BezierWidget {
     }
 
     /// 检测鼠标位置命中的元素
-    fn hit_test(&self, world_pos: Pos2, ui: &mut Ui) -> Option<(DragType, usize)> {
-        let canvas_state_resource: CanvasStateResource =
-            ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
+    fn hit_test(&self, world_pos: Pos2) -> Option<(DragType, usize)> {
+        let hit_radius: f32 = 20.0
+            * self
+                .canvas_state_resource
+                .read_canvas_state(|canvas_state| canvas_state.scale);
 
-        let hit_radius: f32 =
-            10.0 * canvas_state_resource.read_canvas_state(|canvas_state| canvas_state.scale);
+        let all_anchors = std::iter::once(&self.edge.source_anchor)
+            .chain(self.edge.control_anchors.iter())
+            .chain(std::iter::once(&self.edge.target_anchor))
+            .collect::<Vec<_>>();
 
         // 优先检测控制柄
-        for (i, anchor) in self.edge.control_anchors.iter().enumerate() {
+        for (i, anchor) in all_anchors.iter().enumerate() {
             if (world_pos - anchor.handle_in_canvas_pos).length() < hit_radius {
                 return Some((DragType::HandleIn(i), i));
             }
@@ -286,7 +314,7 @@ impl BezierWidget {
         }
 
         // 检测锚点
-        for (i, anchor) in self.edge.control_anchors.iter().enumerate() {
+        for (i, anchor) in all_anchors.iter().enumerate() {
             let offset = world_pos - anchor.canvas_pos;
             if offset.length() < hit_radius {
                 println!("hit anchor: {:?}", i);
@@ -298,13 +326,12 @@ impl BezierWidget {
     }
 
     fn drag_anchor(&mut self, index: usize, ui: &mut Ui) {
-        let canvas_state_resource: CanvasStateResource =
-            ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
-
-        // println!("drag_anchor: {:?}", index);
         let anchor = &mut self.edge.control_anchors[index];
+        // println!("drag_anchor: {:?}", index);
         let delta = ui.input(|i| i.pointer.delta())
-            / canvas_state_resource.read_canvas_state(|canvas_state| canvas_state.scale);
+            / self
+                .canvas_state_resource
+                .read_canvas_state(|canvas_state| canvas_state.scale);
         println!("delta: {:?}", delta);
         anchor.canvas_pos += delta;
         anchor.handle_in_canvas_pos += delta;
@@ -317,12 +344,12 @@ impl BezierWidget {
     }
 
     fn drag_handle_in(&mut self, index: usize, ui: &mut Ui) {
-        let canvas_state_resource: CanvasStateResource =
-            ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
-
+        println!("drag_handle_in: {:?}", index);
         let anchor = &mut self.edge.control_anchors[index];
         let delta = ui.input(|i| i.pointer.delta())
-            / canvas_state_resource.read_canvas_state(|canvas_state| canvas_state.scale);
+            / self
+                .canvas_state_resource
+                .read_canvas_state(|canvas_state| canvas_state.scale);
         anchor.handle_in_canvas_pos += delta;
 
         if anchor.is_smooth {
@@ -333,12 +360,12 @@ impl BezierWidget {
     }
 
     fn drag_handle_out(&mut self, index: usize, ui: &mut Ui) {
-        let canvas_state_resource: CanvasStateResource =
-            ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
-
+        println!("drag_handle_out: {:?}", index);
         let anchor = &mut self.edge.control_anchors[index];
         let delta = ui.input(|i| i.pointer.delta())
-            / canvas_state_resource.read_canvas_state(|canvas_state| canvas_state.scale);
+            / self
+                .canvas_state_resource
+                .read_canvas_state(|canvas_state| canvas_state.scale);
         anchor.handle_out_canvas_pos += delta;
 
         if anchor.is_smooth {
@@ -349,33 +376,22 @@ impl BezierWidget {
     }
 
     fn draw_bezier(&self, ui: &mut Ui) {
-        println!("BezierWidget::draw_bezier");
+        // println!("BezierWidget::draw_bezier");
         let painter = ui.painter();
         // let canvas_state_resource: CanvasStateResource =
         //     ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
+        // 将所有锚点合并
+        let full_anchors = std::iter::once(&self.edge.source_anchor)
+            .chain(self.edge.control_anchors.iter())
+            .chain(std::iter::once(&self.edge.target_anchor))
+            .collect::<Vec<_>>();
 
         // 绘制所有锚点和控制柄
-        for anchor in &self.edge.control_anchors {
-            // let (screen_pos, screen_handle_in, screen_handle_out, radius) = canvas_state_resource
-            //     .read_canvas_state(|canvas_state| {
-            //         (
-            //             canvas_state.to_screen(anchor.pos),
-            //             canvas_state.to_screen(anchor.handle_in),
-            //             canvas_state.to_screen(anchor.handle_out),
-            //             3.0 * canvas_state.scale,
-            //         )
-            //     });
-            // println!("screen_pos: {:?}", screen_pos);
+        for (i, anchor) in full_anchors.iter().enumerate() {
             let radius = 3.0
                 * self
                     .canvas_state_resource
                     .read_canvas_state(|canvas_state| canvas_state.transform.scaling);
-
-            // let screen_pos = anchor.pos;
-            // let screen_handle_in = anchor.handle_in;
-            // let screen_handle_out = anchor.handle_out;
-            // let radius =
-            //     3.0 * canvas_state_resource.read_canvas_state(|canvas_state| canvas_state.scale);
 
             let color = if anchor.selected {
                 egui::Color32::GOLD
@@ -385,40 +401,60 @@ impl BezierWidget {
             let circle_screen_pos = self
                 .canvas_state_resource
                 .read_canvas_state(|canvas_state| canvas_state.to_screen(anchor.canvas_pos));
-            // 绘制锚点
-            painter.circle(circle_screen_pos, radius, color, (1.0, egui::Color32::GOLD));
+
+            if i != 0 && i != full_anchors.len() - 1 {
+                // 绘制锚点
+                painter.circle(circle_screen_pos, radius, color, (1.0, egui::Color32::GOLD));
+            }
+
+            let handle_in_screen_pos =
+                self.canvas_state_resource
+                    .read_canvas_state(|canvas_state| {
+                        canvas_state.to_screen(anchor.handle_in_canvas_pos)
+                    });
+            let handle_out_screen_pos =
+                self.canvas_state_resource
+                    .read_canvas_state(|canvas_state| {
+                        canvas_state.to_screen(anchor.handle_out_canvas_pos)
+                    });
 
             // 绘制控制柄线
-            painter.line_segment(
-                [anchor.canvas_pos, anchor.handle_in_canvas_pos],
-                (3.0, egui::Color32::LIGHT_BLUE),
-            );
-            painter.line_segment(
-                [anchor.canvas_pos, anchor.handle_out_canvas_pos],
-                (3.0, egui::Color32::LIGHT_RED),
-            );
+
+            // 首点没有入控制柄
+            if i != 0 {
+                painter.line_segment(
+                    [circle_screen_pos, handle_in_screen_pos],
+                    (3.0, egui::Color32::LIGHT_BLUE),
+                );
+            }
+            // 末点没有出控制柄
+            if i != full_anchors.len() - 1 {
+                painter.line_segment(
+                    [circle_screen_pos, handle_out_screen_pos],
+                    (3.0, egui::Color32::LIGHT_RED),
+                );
+            }
 
             // 绘制控制柄点
-            painter.circle(
-                anchor.handle_in_canvas_pos,
-                radius,
-                egui::Color32::BLUE,
-                (3.0, egui::Color32::LIGHT_BLUE),
-            );
-            painter.circle(
-                anchor.handle_out_canvas_pos,
-                radius,
-                egui::Color32::RED,
-                (3.0, egui::Color32::LIGHT_RED),
-            );
+            if i != 0 {
+                painter.circle(
+                    handle_in_screen_pos,
+                    radius,
+                    egui::Color32::BLUE,
+                    (3.0, egui::Color32::LIGHT_BLUE),
+                );
+            }
+            if i != full_anchors.len() - 1 {
+                painter.circle(
+                    handle_out_screen_pos,
+                    radius,
+                    egui::Color32::RED,
+                    (3.0, egui::Color32::LIGHT_RED),
+                );
+            }
         }
 
         // 绘制贝塞尔曲线路径
-        // 将所有锚点合并
-        let full_anchors = std::iter::once(&self.edge.source_anchor)
-            .chain(self.edge.control_anchors.iter())
-            .chain(std::iter::once(&self.edge.target_anchor))
-            .collect::<Vec<_>>();
 
         if full_anchors.len() >= 2 {
             let mut path = Vec::new();
@@ -452,6 +488,11 @@ impl BezierWidget {
             painter.add(Shape::line(path, Stroke::new(2.0, egui::Color32::GRAY)));
         }
 
+        self.draw_arrow(painter);
+        self.draw_bounding_rect(painter);
+    }
+
+    fn draw_bounding_rect(&self, painter: &egui::Painter) {
         // 绘制包围框
         let bounding_rect = self.bounding_rect(100);
         let screen_rect = self
@@ -463,6 +504,63 @@ impl BezierWidget {
             egui::Color32::TRANSPARENT,
             Stroke::new(1.0, egui::Color32::ORANGE),
         );
+    }
+
+    fn draw_arrow(&self, painter: &egui::Painter) {
+        let scale = self
+            .canvas_state_resource
+            .read_canvas_state(|canvas_state| canvas_state.transform.scaling);
+
+        // 箭头的原始长度（例如 10.0），再乘以缩放系数
+        let arrow_length = 10.0 * scale;
+
+        // 同样，你也可以让线条粗细随缩放变化
+        let arrow_stroke_width = 2.0;
+
+        // 3. 在整条曲线最后端画箭头
+        //    由于 full_anchors 最后一项就是 target_anchor，让我们直接取它使用
+        let target_anchor = &self.edge.target_anchor;
+        let screen_end = self
+            .canvas_state_resource
+            .read_canvas_state(|canvas_state| canvas_state.to_screen(target_anchor.canvas_pos));
+
+        // 这里假设你希望使用 (p3 - p2) （即 target_anchor.canvas_pos - target_anchor.handle_in_canvas_pos）
+        // 来表示 t=1 处贝塞尔曲线的切线方向
+        // 如果你想沿 handle_out，也可以换成 (target_anchor.handle_out_canvas_pos - target_anchor.canvas_pos)
+        let world_dir = target_anchor.handle_in_canvas_pos - target_anchor.canvas_pos;
+        // 避免极端情况
+        if world_dir.length() > f32::EPSILON {
+            let screen_dir_start = self
+                .canvas_state_resource
+                .read_canvas_state(|canvas_state| canvas_state.to_screen(target_anchor.canvas_pos));
+            let screen_dir_end = self
+                .canvas_state_resource
+                .read_canvas_state(|canvas_state| {
+                    canvas_state.to_screen(target_anchor.canvas_pos - world_dir)
+                });
+            let dir = screen_dir_end - screen_dir_start;
+
+            // 箭头长度
+            // let arrow_length = 10.0;
+
+            // 旋转向量函数
+            fn rotate(v: egui::Vec2, angle_rad: f32) -> egui::Vec2 {
+                let (sin, cos) = angle_rad.sin_cos();
+                egui::Vec2::new(v.x * cos - v.y * sin, v.x * sin + v.y * cos)
+            }
+
+            // 箭头两条短线与切线的夹角（可自己调整角度）
+            let angle = 30_f32.to_radians();
+            let dir_norm = dir.normalized();
+            let left_dir = rotate(dir_norm, angle) * arrow_length;
+            let right_dir = rotate(dir_norm, -angle) * arrow_length;
+
+            let arrow_stroke = (arrow_stroke_width, egui::Color32::LIGHT_BLUE);
+
+            // 在目标端画两条短线
+            painter.line_segment([screen_end, screen_end - left_dir], arrow_stroke);
+            painter.line_segment([screen_end, screen_end - right_dir], arrow_stroke);
+        }
     }
 }
 
