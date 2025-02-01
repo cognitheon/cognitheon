@@ -184,6 +184,8 @@ impl CanvasWidget {
                         self.graph_resource.with_graph(|graph| {
                             graph.add_edge(edge);
                         });
+                    } else {
+                        println!("edge exists");
                     }
                 } else {
                     // Released on empty space, create a node or do nothing
@@ -333,19 +335,6 @@ impl Widget for &mut CanvasWidget {
                 draw_grid(ui, canvas_state, screen_rect);
             });
 
-        // draw_grid(ui, canvas_state, canvas_rect);
-        // ui.add(BsplineWidget::new(
-        //     vec![
-        //         Pos2::new(0.0, 0.0),
-        //         Pos2::new(100.0, 100.0),
-        //         Pos2::new(100.0, 200.0),
-        //         Pos2::new(300.0, 300.0),
-        //         Pos2::new(100.0, 400.0),
-        //     ],
-        //     canvas_rect,
-        //     self.canvas_state,
-        // ));
-
         if let Some(edge) = self.temp_edge.as_ref() {
             // println!("temp_edge target: {:?}", edge.target);
             ui.add(TempEdgeWidget {
@@ -354,15 +343,6 @@ impl Widget for &mut CanvasWidget {
                 canvas_state_resource: self.canvas_state_resource.clone(),
             });
         }
-
-        // ui.add(BezierWidget::new(
-        //     vec![
-        //         // self.graph.get_creating_edge().unwrap().source.,
-        //         Anchor::new_smooth(Pos2::new(100.0, 200.0)),
-        //     ],
-        //     self.canvas_state,
-        //     EdgeIndex::new(0),
-        // ));
 
         // graph_resource.read_graph(|graph| {
         crate::graph::render_graph(

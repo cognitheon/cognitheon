@@ -1,7 +1,6 @@
-use std::fmt::Debug;
 use std::sync::Arc;
 
-use egui::{ComboBox, Ui};
+use egui::ComboBox;
 
 use crate::global::{CanvasStateResource, GraphResource};
 use crate::graph::edge::EdgeType;

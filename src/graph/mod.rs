@@ -1,4 +1,5 @@
 pub mod edge;
+pub mod helpers;
 pub mod node;
 pub mod node_render_info;
 
@@ -9,6 +10,7 @@ use crate::ui::edge::EdgeWidget;
 use crate::ui::line_edge::LineEdge;
 use edge::{Edge, EdgeType};
 use petgraph::graph::{EdgeIndex, NodeIndex};
+use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 
 use crate::ui::node::NodeWidget;
 
@@ -95,6 +97,16 @@ impl Graph {
 
     pub fn edge_exists(&self, src_node_index: NodeIndex, dst_node_index: NodeIndex) -> bool {
         self.graph.contains_edge(src_node_index, dst_node_index)
+    }
+
+    pub fn edge_count_undirected(&self, node1_index: NodeIndex, node2_index: NodeIndex) -> usize {
+        self.graph
+            .edge_references()
+            .filter(|edge| {
+                edge.source() == node1_index && edge.target() == node2_index
+                    || edge.source() == node2_index && edge.target() == node1_index
+            })
+            .count()
     }
 }
 

@@ -6,4 +6,5 @@ pub mod canvas;
 pub mod colors;
 pub mod graph;
 pub mod ui;
+pub mod geometry;
 pub use app::TemplateApp;

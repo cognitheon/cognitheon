@@ -107,6 +107,14 @@ impl BezierEdge {
         }
     }
 
+    pub fn new_with_anchors(source: Anchor, target: Anchor, control_anchors: Vec<Anchor>) -> Self {
+        Self {
+            source_anchor: source,
+            target_anchor: target,
+            control_anchors,
+        }
+    }
+
     pub fn update_control_anchors(&mut self, control_anchors: Vec<Anchor>) {
         self.control_anchors = control_anchors;
     }
@@ -127,7 +135,7 @@ pub enum DragType {
 }
 
 impl Widget for BezierWidget {
-    fn ui(mut self, ui: &mut Ui) -> Response {
+    fn ui(self, ui: &mut Ui) -> Response {
         // let canvas_state_resource: CanvasStateResource =
         //     ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
 
@@ -143,7 +151,7 @@ impl Widget for BezierWidget {
 
         let response = ui.allocate_rect(screen_rect, Sense::click_and_drag());
         self.draw_bezier(ui);
-        self.apply_actions(&response, ui);
+        // self.apply_actions(&response, ui);
         response
     }
 }
@@ -236,144 +244,144 @@ impl BezierWidget {
         (min, Vec2::new(max.x - min.x, max.y - min.y))
     }
 
-    fn apply_actions(&mut self, response: &egui::Response, ui: &mut Ui) {
-        // 获取鼠标位置（屏幕坐标）
-        let mouse_screen_pos = match ui.ctx().input(|i| i.pointer.hover_pos()) {
-            Some(p) => p,
-            None => return,
-        };
+    // fn apply_actions(&mut self, response: &egui::Response, ui: &mut Ui) {
+    //     // 获取鼠标位置（屏幕坐标）
+    //     let mouse_screen_pos = match ui.ctx().input(|i| i.pointer.hover_pos()) {
+    //         Some(p) => p,
+    //         None => return,
+    //     };
 
-        // println!("mouse_screen_pos: {:?}", mouse_screen_pos);
-        // 转换为世界坐标
-        let mouse_canvas_pos = self
-            .canvas_state_resource
-            .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
-        // println!("world_pos: {:?}", world_pos);
-        // println!("response rect: {:?}", response.rect);
-        if response.drag_started() {
-            println!("bezier drag begin");
-            if let Some((drag_type, _)) = self.hit_test(mouse_canvas_pos) {
-                println!("bezier drag begin: {:?}", drag_type);
-                self.dragging = Some(drag_type);
-            }
-        }
+    //     // println!("mouse_screen_pos: {:?}", mouse_screen_pos);
+    //     // 转换为世界坐标
+    //     let mouse_canvas_pos = self
+    //         .canvas_state_resource
+    //         .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
+    //     // println!("world_pos: {:?}", world_pos);
+    //     // println!("response rect: {:?}", response.rect);
+    //     if response.drag_started() {
+    //         println!("bezier drag begin");
+    //         if let Some((drag_type, _)) = self.hit_test(mouse_canvas_pos) {
+    //             println!("bezier drag begin: {:?}", drag_type);
+    //             self.dragging = Some(drag_type);
+    //         }
+    //     }
 
-        // 处理拖动开始
-        // if response.clicked() {
-        //     if let Some((drag_type, _)) = self.hit_test(world_pos) {
-        //         println!("drag begin: {:?}", drag_type);
-        //         self.dragging = Some(drag_type);
-        //     }
-        // }
+    //     // 处理拖动开始
+    //     // if response.clicked() {
+    //     //     if let Some((drag_type, _)) = self.hit_test(world_pos) {
+    //     //         println!("drag begin: {:?}", drag_type);
+    //     //         self.dragging = Some(drag_type);
+    //     //     }
+    //     // }
 
-        // 处理持续拖动
-        if response.dragged() {
-            println!("bezier dragging: {:?}", self.dragging);
-            if let Some(drag_type) = &self.dragging {
-                println!("drag_type: {:?}", drag_type);
-                match drag_type {
-                    DragType::Anchor(index) => self.drag_anchor(*index, ui),
-                    DragType::HandleIn(index) => self.drag_handle_in(*index, ui),
-                    DragType::HandleOut(index) => self.drag_handle_out(*index, ui),
-                }
-            }
-        }
+    //     // 处理持续拖动
+    //     if response.dragged() {
+    //         println!("bezier dragging: {:?}", self.dragging);
+    //         if let Some(drag_type) = &self.dragging {
+    //             println!("drag_type: {:?}", drag_type);
+    //             match drag_type {
+    //                 DragType::Anchor(index) => self.drag_anchor(*index, ui),
+    //                 DragType::HandleIn(index) => self.drag_handle_in(*index, ui),
+    //                 DragType::HandleOut(index) => self.drag_handle_out(*index, ui),
+    //             }
+    //         }
+    //     }
 
-        if response.drag_stopped() {
-            println!("dragging released");
-            self.dragging = None;
-        }
+    //     if response.drag_stopped() {
+    //         println!("dragging released");
+    //         self.dragging = None;
+    //     }
 
-        // 处理拖动结束
-        // if response.clicked() {
-        //     println!("dragging released");
-        //     self.dragging = None;
-        // }
-    }
+    //     // 处理拖动结束
+    //     // if response.clicked() {
+    //     //     println!("dragging released");
+    //     //     self.dragging = None;
+    //     // }
+    // }
 
-    /// 检测鼠标位置命中的元素
-    fn hit_test(&self, world_pos: Pos2) -> Option<(DragType, usize)> {
-        let hit_radius: f32 = 20.0
-            * self
-                .canvas_state_resource
-                .read_canvas_state(|canvas_state| canvas_state.scale);
+    // /// 检测鼠标位置命中的元素
+    // fn hit_test(&self, world_pos: Pos2) -> Option<(DragType, usize)> {
+    //     let hit_radius: f32 = 20.0
+    //         * self
+    //             .canvas_state_resource
+    //             .read_canvas_state(|canvas_state| canvas_state.scale);
 
-        let all_anchors = std::iter::once(&self.edge.source_anchor)
-            .chain(self.edge.control_anchors.iter())
-            .chain(std::iter::once(&self.edge.target_anchor))
-            .collect::<Vec<_>>();
+    //     let all_anchors = std::iter::once(&self.edge.source_anchor)
+    //         .chain(self.edge.control_anchors.iter())
+    //         .chain(std::iter::once(&self.edge.target_anchor))
+    //         .collect::<Vec<_>>();
 
-        // 优先检测控制柄
-        for (i, anchor) in all_anchors.iter().enumerate() {
-            if (world_pos - anchor.handle_in_canvas_pos).length() < hit_radius {
-                return Some((DragType::HandleIn(i), i));
-            }
-            if (world_pos - anchor.handle_out_canvas_pos).length() < hit_radius {
-                return Some((DragType::HandleOut(i), i));
-            }
-        }
+    //     // 优先检测控制柄
+    //     for (i, anchor) in all_anchors.iter().enumerate() {
+    //         if (world_pos - anchor.handle_in_canvas_pos).length() < hit_radius {
+    //             return Some((DragType::HandleIn(i), i));
+    //         }
+    //         if (world_pos - anchor.handle_out_canvas_pos).length() < hit_radius {
+    //             return Some((DragType::HandleOut(i), i));
+    //         }
+    //     }
 
-        // 检测锚点
-        for (i, anchor) in all_anchors.iter().enumerate() {
-            let offset = world_pos - anchor.canvas_pos;
-            if offset.length() < hit_radius {
-                println!("hit anchor: {:?}", i);
-                return Some((DragType::Anchor(i), i));
-            }
-        }
+    //     // 检测锚点
+    //     for (i, anchor) in all_anchors.iter().enumerate() {
+    //         let offset = world_pos - anchor.canvas_pos;
+    //         if offset.length() < hit_radius {
+    //             println!("hit anchor: {:?}", i);
+    //             return Some((DragType::Anchor(i), i));
+    //         }
+    //     }
 
-        None
-    }
+    //     None
+    // }
 
-    fn drag_anchor(&mut self, index: usize, ui: &mut Ui) {
-        let anchor = &mut self.edge.control_anchors[index];
-        // println!("drag_anchor: {:?}", index);
-        let delta = ui.input(|i| i.pointer.delta())
-            / self
-                .canvas_state_resource
-                .read_canvas_state(|canvas_state| canvas_state.scale);
-        println!("delta: {:?}", delta);
-        anchor.canvas_pos += delta;
-        anchor.handle_in_canvas_pos += delta;
-        anchor.handle_out_canvas_pos += delta;
-        println!("anchor: {:?}", anchor.canvas_pos);
-        // 如果锚点是平滑状态，需要强制更新控制柄
-        if anchor.is_smooth {
-            anchor.enforce_smooth();
-        }
-    }
+    // fn drag_anchor(&mut self, index: usize, ui: &mut Ui) {
+    //     let anchor = &mut self.edge.control_anchors[index];
+    //     // println!("drag_anchor: {:?}", index);
+    //     let delta = ui.input(|i| i.pointer.delta())
+    //         / self
+    //             .canvas_state_resource
+    //             .read_canvas_state(|canvas_state| canvas_state.scale);
+    //     println!("delta: {:?}", delta);
+    //     anchor.canvas_pos += delta;
+    //     anchor.handle_in_canvas_pos += delta;
+    //     anchor.handle_out_canvas_pos += delta;
+    //     println!("anchor: {:?}", anchor.canvas_pos);
+    //     // 如果锚点是平滑状态，需要强制更新控制柄
+    //     if anchor.is_smooth {
+    //         anchor.enforce_smooth();
+    //     }
+    // }
 
-    fn drag_handle_in(&mut self, index: usize, ui: &mut Ui) {
-        println!("drag_handle_in: {:?}", index);
-        let anchor = &mut self.edge.control_anchors[index];
-        let delta = ui.input(|i| i.pointer.delta())
-            / self
-                .canvas_state_resource
-                .read_canvas_state(|canvas_state| canvas_state.scale);
-        anchor.handle_in_canvas_pos += delta;
+    // fn drag_handle_in(&mut self, index: usize, ui: &mut Ui) {
+    //     println!("drag_handle_in: {:?}", index);
+    //     let anchor = &mut self.edge.control_anchors[index];
+    //     let delta = ui.input(|i| i.pointer.delta())
+    //         / self
+    //             .canvas_state_resource
+    //             .read_canvas_state(|canvas_state| canvas_state.scale);
+    //     anchor.handle_in_canvas_pos += delta;
 
-        if anchor.is_smooth {
-            let mirror_delta =
-                anchor.canvas_pos - (anchor.handle_in_canvas_pos - anchor.canvas_pos);
-            anchor.handle_out_canvas_pos = mirror_delta;
-        }
-    }
+    //     if anchor.is_smooth {
+    //         let mirror_delta =
+    //             anchor.canvas_pos - (anchor.handle_in_canvas_pos - anchor.canvas_pos);
+    //         anchor.handle_out_canvas_pos = mirror_delta;
+    //     }
+    // }
 
-    fn drag_handle_out(&mut self, index: usize, ui: &mut Ui) {
-        println!("drag_handle_out: {:?}", index);
-        let anchor = &mut self.edge.control_anchors[index];
-        let delta = ui.input(|i| i.pointer.delta())
-            / self
-                .canvas_state_resource
-                .read_canvas_state(|canvas_state| canvas_state.scale);
-        anchor.handle_out_canvas_pos += delta;
+    // fn drag_handle_out(&mut self, index: usize, ui: &mut Ui) {
+    //     println!("drag_handle_out: {:?}", index);
+    //     let anchor = &mut self.edge.control_anchors[index];
+    //     let delta = ui.input(|i| i.pointer.delta())
+    //         / self
+    //             .canvas_state_resource
+    //             .read_canvas_state(|canvas_state| canvas_state.scale);
+    //     anchor.handle_out_canvas_pos += delta;
 
-        if anchor.is_smooth {
-            let mirror_delta =
-                anchor.canvas_pos - (anchor.handle_out_canvas_pos - anchor.canvas_pos);
-            anchor.handle_in_canvas_pos = mirror_delta;
-        }
-    }
+    //     if anchor.is_smooth {
+    //         let mirror_delta =
+    //             anchor.canvas_pos - (anchor.handle_out_canvas_pos - anchor.canvas_pos);
+    //         anchor.handle_in_canvas_pos = mirror_delta;
+    //     }
+    // }
 
     fn draw_bezier(&self, ui: &mut Ui) {
         // println!("BezierWidget::draw_bezier");
@@ -489,22 +497,22 @@ impl BezierWidget {
         }
 
         self.draw_arrow(painter);
-        self.draw_bounding_rect(painter);
+        // self.draw_bounding_rect(painter);
     }
 
-    fn draw_bounding_rect(&self, painter: &egui::Painter) {
-        // 绘制包围框
-        let bounding_rect = self.bounding_rect(100);
-        let screen_rect = self
-            .canvas_state_resource
-            .read_canvas_state(|canvas_state| canvas_state.to_screen_rect(bounding_rect));
-        painter.rect(
-            screen_rect,
-            0.0,
-            egui::Color32::TRANSPARENT,
-            Stroke::new(1.0, egui::Color32::ORANGE),
-        );
-    }
+    // fn draw_bounding_rect(&self, painter: &egui::Painter) {
+    //     // 绘制包围框
+    //     let bounding_rect = self.bounding_rect(100);
+    //     let screen_rect = self
+    //         .canvas_state_resource
+    //         .read_canvas_state(|canvas_state| canvas_state.to_screen_rect(bounding_rect));
+    //     painter.rect(
+    //         screen_rect,
+    //         0.0,
+    //         egui::Color32::TRANSPARENT,
+    //         Stroke::new(1.0, egui::Color32::ORANGE),
+    //     );
+    // }
 
     fn draw_arrow(&self, painter: &egui::Painter) {
         let scale = self
@@ -555,7 +563,7 @@ impl BezierWidget {
             let left_dir = rotate(dir_norm, angle) * arrow_length;
             let right_dir = rotate(dir_norm, -angle) * arrow_length;
 
-            let arrow_stroke = (arrow_stroke_width, egui::Color32::LIGHT_BLUE);
+            let arrow_stroke = (arrow_stroke_width, egui::Color32::GRAY);
 
             // 在目标端画两条短线
             painter.line_segment([screen_end, screen_end - left_dir], arrow_stroke);

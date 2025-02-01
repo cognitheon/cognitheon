@@ -1,9 +1,14 @@
 use egui::*;
-use petgraph::graph::{EdgeIndex, NodeIndex};
+use petgraph::graph::EdgeIndex;
 
 use crate::{
+    geometry::{edge_offset_direction, intersect_rect_with_pos, IntersectDirection},
     global::{CanvasStateResource, GraphResource},
-    graph::{edge::EdgeType, node::NodeRenderInfo},
+    graph::{
+        edge::EdgeType,
+        helpers::{get_node_render_info, node_rect_center},
+        node::NodeRenderInfo,
+    },
 };
 
 use super::{
@@ -18,134 +23,101 @@ pub struct EdgeWidget {
 }
 
 impl EdgeWidget {
-    fn intersect_rect_simple(rect: Rect, p: Pos2) -> Option<Pos2> {
-        let c = rect.center();
-        let dx = p.x - c.x;
-        let dy = p.y - c.y;
-
-        // 若方向向量都为 0，无法判定方向
-        if dx.abs() < f32::EPSILON && dy.abs() < f32::EPSILON {
-            return None;
-        }
-
-        let mut t_candidates = Vec::new();
-
-        // 计算与“左右边”相交的 t_x
-        if dx > 0.0 {
-            // 会先撞到 rect.max.x
-            let t = (rect.max.x - c.x) / dx;
-            if t >= 0.0 {
-                let y_on_edge = c.y + t * dy;
-                if y_on_edge >= rect.min.y && y_on_edge <= rect.max.y {
-                    t_candidates.push((t, Pos2::new(rect.max.x, y_on_edge)));
-                }
-            }
-        } else if dx < 0.0 {
-            // 会先撞到 rect.min.x
-            let t = (rect.min.x - c.x) / dx;
-            if t >= 0.0 {
-                let y_on_edge = c.y + t * dy;
-                if y_on_edge >= rect.min.y && y_on_edge <= rect.max.y {
-                    t_candidates.push((t, Pos2::new(rect.min.x, y_on_edge)));
-                }
-            }
-        }
-
-        // 计算与“上下边”相交的 t_y
-        if dy > 0.0 {
-            // 会先撞到 rect.max.y
-            let t = (rect.max.y - c.y) / dy;
-            if t >= 0.0 {
-                let x_on_edge = c.x + t * dx;
-                if x_on_edge >= rect.min.x && x_on_edge <= rect.max.x {
-                    t_candidates.push((t, Pos2::new(x_on_edge, rect.max.y)));
-                }
-            }
-        } else if dy < 0.0 {
-            // 会先撞到 rect.min.y
-            let t = (rect.min.y - c.y) / dy;
-            if t >= 0.0 {
-                let x_on_edge = c.x + t * dx;
-                if x_on_edge >= rect.min.x && x_on_edge <= rect.max.x {
-                    t_candidates.push((t, Pos2::new(x_on_edge, rect.min.y)));
-                }
-            }
-        }
-
-        // 取最小 t
-        t_candidates
-            .into_iter()
-            .min_by(|(t1, _), (t2, _)| t1.partial_cmp(t2).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(_, pos)| pos)
-    }
-
-    // 由节点中心点和目标点计算出在节点边框上的点
-    fn get_source_pos(
-        &self,
-        ui: &egui::Ui,
-        source_render_info: NodeRenderInfo,
-        target_render_info: NodeRenderInfo,
-    ) -> Pos2 {
-        // 计算出在节点边框上的点
-        let source_node_canvas_center = source_render_info.canvas_center();
-        let target_node_canvas_center = target_render_info.canvas_center();
-        let source_node_rect = source_render_info.canvas_rect;
-        let target_node_rect = target_render_info.canvas_rect;
-
-        // 1. 计算斜率
-        let slope = target_node_canvas_center - source_node_canvas_center;
-        // 2. 计算在节点边框上的点
-        source_node_canvas_center
-    }
-
-    fn get_target_pos(
-        &self,
-        ui: &egui::Ui,
-        source_node_canvas_center: Pos2,
-        target_node_canvas_center: Pos2,
-    ) -> Pos2 {
-        let (src, dst) = self
-            .graph_resource
-            .read_graph(|graph| graph.graph.edge_endpoints(self.edge_index))
-            .unwrap();
-
-        let dst_node_render_info: NodeRenderInfo = ui
-            .ctx()
-            .data(|reader| reader.get_temp(Id::new(dst.index().to_string())))
-            .unwrap();
-        let dst_node_canvas_center = dst_node_render_info.canvas_center();
-
-        dst_node_canvas_center
-    }
-
     // 根据实时的节点位置更新贝塞尔曲线锚点信息
     fn update_bezier_edge(&self, ui: &egui::Ui) {
         // 获取首尾节点
-        let (src, dst) = self
+        let (src_node_index, dst_node_index) = self
             .graph_resource
             .read_graph(|graph| graph.graph.edge_endpoints(self.edge_index))
             .unwrap();
 
+        let edge_count = self
+            .graph_resource
+            .read_graph(|graph| graph.edge_count_undirected(src_node_index, dst_node_index));
+        println!("edge_count: {:?}", edge_count);
+
         // 获取首尾节点中心点
-        let src_node_render_info: NodeRenderInfo = ui
-            .ctx()
-            .data(|reader| reader.get_temp(Id::new(src.index().to_string())))
-            .unwrap();
-        let src_node_canvas_center = src_node_render_info.canvas_center();
+        let src_node_render_info = get_node_render_info(src_node_index, ui);
+        let src_node_canvas_center = node_rect_center(src_node_index, ui);
 
-        let dst_node_render_info: NodeRenderInfo = ui
-            .ctx()
-            .data(|reader| reader.get_temp(Id::new(dst.index().to_string())))
-            .unwrap();
-        let dst_node_canvas_center = dst_node_render_info.canvas_center();
+        let dst_node_render_info = get_node_render_info(dst_node_index, ui);
+        let dst_node_canvas_center = node_rect_center(dst_node_index, ui);
 
-        let source_canvas_pos = EdgeWidget::intersect_rect_simple(
-            src_node_render_info.canvas_rect,
-            dst_node_canvas_center,
+        let mut src_center = src_node_canvas_center;
+        let mut dst_center = dst_node_canvas_center;
+
+        println!("========================");
+        println!("edge_count: {}", edge_count);
+        println!("src_center: {:?}", src_center);
+        println!("dst_center: {:?}", dst_center);
+        if edge_count != 1 {
+            let offset_dir = edge_offset_direction(src_node_canvas_center, dst_node_canvas_center);
+            println!("offset_dir: {:?}", offset_dir);
+            let offset_amount = 10.0
+                * self
+                    .canvas_state_resource
+                    .read_canvas_state(|canvas_state| canvas_state.transform.scaling);
+            // let edge_dir = (dst_node_canvas_center - src_node_canvas_center).normalized();
+            src_center += offset_dir * offset_amount;
+            dst_center += offset_dir * offset_amount;
+            // // 如果边向量靠右上，则偏移方向靠右下
+            // if edge_dir.x > 0.0 && edge_dir.y < 0.0 {
+            //     // 如果边向量靠右上，则偏移方向靠左下
+            //     src_center -= offset_dir * offset_amount;
+            //     dst_center += offset_dir * offset_amount;
+            // } else if edge_dir.x < 0.0 && edge_dir.y > 0.0 {
+            //     // 如果边向量靠左下，则偏移方向靠右上
+            //     src_center += offset_dir * offset_amount;
+            //     dst_center -= offset_dir * offset_amount;
+            // } else if edge_dir.x > 0.0 && edge_dir.y > 0.0 {
+            //     // 如果边向量靠右下，则偏移方向靠左上
+            //     src_center -= offset_dir * offset_amount;
+            //     dst_center += offset_dir * offset_amount;
+            // } else if edge_dir.x < 0.0 && edge_dir.y < 0.0 {
+            //     // 如果边向量靠左上，则偏移方向靠右上
+            //     src_center += offset_dir * offset_amount;
+            //     dst_center -= offset_dir * offset_amount;
+            // }
+        }
+
+        println!("src_center: {:?}", src_center);
+        println!("dst_center: {:?}", dst_center);
+        println!("========================");
+
+        let Some((source_canvas_pos, source_dir)) =
+            intersect_rect_with_pos(src_node_render_info.canvas_rect, src_center, dst_center)
+        else {
+            return;
+        };
+        let Some((target_canvas_pos, target_dir)) =
+            intersect_rect_with_pos(dst_node_render_info.canvas_rect, dst_center, src_center)
+        else {
+            return;
+        };
+
+        let handle_offset_source = match source_dir {
+            IntersectDirection::Left => Vec2::new(-30.0, 0.0),
+            IntersectDirection::Right => Vec2::new(30.0, 0.0),
+            IntersectDirection::Top => Vec2::new(0.0, -30.0),
+            IntersectDirection::Bottom => Vec2::new(0.0, 30.0),
+        };
+        println!("target_dir: {:?}", target_dir);
+        let handle_offset_target = match target_dir {
+            IntersectDirection::Left => Vec2::new(-30.0, 0.0),
+            IntersectDirection::Right => Vec2::new(30.0, 0.0),
+            IntersectDirection::Top => Vec2::new(0.0, -30.0),
+            IntersectDirection::Bottom => Vec2::new(0.0, 30.0),
+        };
+
+        let source_anchor = Anchor::with_handles(
+            source_canvas_pos,
+            source_canvas_pos + handle_offset_source, // handle_in
+            source_canvas_pos + handle_offset_source, // handle_out
         );
-        let target_canvas_pos = EdgeWidget::intersect_rect_simple(
-            dst_node_render_info.canvas_rect,
-            src_node_canvas_center,
+        let target_anchor = Anchor::with_handles(
+            target_canvas_pos,
+            target_canvas_pos + handle_offset_target,
+            target_canvas_pos + handle_offset_target,
         );
 
         // 获取已有贝塞尔曲线控制点锚点
@@ -154,11 +126,14 @@ impl EdgeWidget {
             .read_graph(|graph| graph.get_edge(self.edge_index).unwrap().bezier_edge.clone());
         let control_anchors = bezier_edge.control_anchors;
 
-        let mut new_bezier_edge = BezierEdge::new(
-            Anchor::new_smooth(source_canvas_pos.unwrap()),
-            Anchor::new_smooth(target_canvas_pos.unwrap()),
-        );
-        new_bezier_edge.update_control_anchors(control_anchors);
+        let new_bezier_edge =
+            BezierEdge::new_with_anchors(source_anchor, target_anchor, control_anchors);
+
+        // let mut new_bezier_edge = BezierEdge::new(
+        //     Anchor::new_smooth(source_canvas_pos.unwrap()),
+        //     Anchor::new_smooth(target_canvas_pos.unwrap()),
+        // );
+        // new_bezier_edge.update_control_anchors(control_anchors);
 
         self.graph_resource.with_graph(|graph| {
             graph.update_bezier_edge(self.edge_index, new_bezier_edge);
@@ -167,36 +142,57 @@ impl EdgeWidget {
 
     fn update_line_edge(&self, ui: &egui::Ui) {
         // 获取首尾节点
-        let (src, dst) = self
+        let (src_node_index, dst_node_index) = self
             .graph_resource
             .read_graph(|graph| graph.graph.edge_endpoints(self.edge_index))
             .unwrap();
 
+        let edge_count = self
+            .graph_resource
+            .read_graph(|graph| graph.edge_count_undirected(src_node_index, dst_node_index));
+        println!("edge_count: {:?}", edge_count);
+
         // 获取首尾节点中心点
         let src_node_render_info: NodeRenderInfo = ui
             .ctx()
-            .data(|reader| reader.get_temp(Id::new(src.index().to_string())))
+            .data(|reader| reader.get_temp(Id::new(src_node_index.index().to_string())))
             .unwrap();
         let src_node_canvas_center = src_node_render_info.canvas_center();
 
         let dst_node_render_info: NodeRenderInfo = ui
             .ctx()
-            .data(|reader| reader.get_temp(Id::new(dst.index().to_string())))
+            .data(|reader| reader.get_temp(Id::new(dst_node_index.index().to_string())))
             .unwrap();
         let dst_node_canvas_center = dst_node_render_info.canvas_center();
 
-        let source_canvas_pos = EdgeWidget::intersect_rect_simple(
-            src_node_render_info.canvas_rect,
-            dst_node_canvas_center,
-        );
-        let target_canvas_pos = EdgeWidget::intersect_rect_simple(
-            dst_node_render_info.canvas_rect,
-            src_node_canvas_center,
-        );
+        let mut src_center = src_node_canvas_center;
+        let mut dst_center = dst_node_canvas_center;
+
+        if edge_count != 1 {
+            let offset_dir = edge_offset_direction(src_node_canvas_center, dst_node_canvas_center);
+            println!("offset_dir: {:?}", offset_dir);
+            let offset_amount = 10.0
+                * self
+                    .canvas_state_resource
+                    .read_canvas_state(|canvas_state| canvas_state.transform.scaling);
+            src_center += offset_dir * offset_amount;
+            dst_center += offset_dir * offset_amount;
+        }
+
+        let Some((source_canvas_pos, _source_dir)) =
+            intersect_rect_with_pos(src_node_render_info.canvas_rect, src_center, dst_center)
+        else {
+            return;
+        };
+        let Some((target_canvas_pos, _target_dir)) =
+            intersect_rect_with_pos(dst_node_render_info.canvas_rect, dst_center, src_center)
+        else {
+            return;
+        };
 
         let new_line_edge = LineEdge::new(
-            Anchor::new_smooth(source_canvas_pos.unwrap()),
-            Anchor::new_smooth(target_canvas_pos.unwrap()),
+            Anchor::new_smooth(source_canvas_pos),
+            Anchor::new_smooth(target_canvas_pos),
         );
         self.graph_resource.with_graph(|graph| {
             graph.update_line_edge(self.edge_index, new_line_edge);

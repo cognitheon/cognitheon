@@ -1,8 +1,5 @@
 use crate::global::{CanvasStateResource, GraphResource};
-use crate::graph::edge::{Edge, EdgeType};
-use crate::graph::node::{Node, NodeRenderInfo};
-use crate::ui::bezier::{Anchor, BezierEdge};
-use crate::ui::temp_edge::{TempEdge, TempEdgeTarget};
+use crate::graph::node::NodeRenderInfo;
 use egui::{Id, Sense, Stroke, Widget};
 use petgraph::graph::NodeIndex;
 
