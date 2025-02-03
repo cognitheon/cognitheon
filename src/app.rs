@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
-use egui::ComboBox;
+use egui::{Align, ComboBox, Layout, RichText};
 
-use crate::global::{CanvasStateResource, GraphResource};
+use crate::globals::{
+    canvas_state_resource::CanvasStateResource, graph_resource::GraphResource,
+    particle_system_resource::ParticleSystemResource,
+};
 use crate::graph::edge::EdgeType;
 use crate::particle::particle_system::ParticleSystem;
 use crate::ui::canvas::CanvasWidget;
@@ -21,6 +24,8 @@ pub struct TemplateApp {
     graph_resource: GraphResource,
     #[serde(skip)]
     canvas_widget: CanvasWidget,
+    #[serde(skip)]
+    particle_system: Option<ParticleSystemResource>,
 }
 
 // impl Debug for TemplateApp {
@@ -42,6 +47,7 @@ impl Default for TemplateApp {
             canvas_resource: canvas_resource.clone(),
             graph_resource: graph_resource.clone(),
             canvas_widget: CanvasWidget::new(graph_resource.clone(), canvas_resource.clone()),
+            particle_system: None,
         }
     }
 }
@@ -59,7 +65,7 @@ impl TemplateApp {
         // }
         setup_font(&cc.egui_ctx);
 
-        let app = if let Some(storage) = cc.storage {
+        let mut app = if let Some(storage) = cc.storage {
             println!("load");
             let mut app: TemplateApp =
                 eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
@@ -84,13 +90,17 @@ impl TemplateApp {
                 2.0,  // 粒子最大生命（秒）
                 10.0, // 粒子最大速度
             );
+
+            let particle_system_resource = ParticleSystemResource::new(particle_system);
             // println!("particle_system: {:?}", particle_system);
 
             // 注册到资源里，这样在回调里可以获取到
             rs.renderer
                 .write()
                 .callback_resources
-                .insert::<ParticleSystem>(particle_system);
+                .insert::<ParticleSystemResource>(particle_system_resource.clone());
+
+            app.particle_system = Some(particle_system_resource.clone());
         }
 
         app
@@ -116,10 +126,23 @@ impl eframe::App for TemplateApp {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        println!(
-            "update: {:?}",
-            self.graph_resource.0.read().unwrap().graph.node_count()
-        );
+        // println!(
+        //     "update: {:?}",
+        //     self.graph_resource.0.read().unwrap().graph.node_count()
+        // );
+
+        if let Some(particle_system_resource) = &self.particle_system {
+            particle_system_resource.read_particle_system(|particle_system| {
+                println!(
+                    "particle_system: {:?}",
+                    particle_system
+                        .particles
+                        .iter()
+                        .filter(|p| p.life > 0.0)
+                        .count()
+                );
+            });
+        }
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
 
@@ -171,22 +194,45 @@ impl eframe::App for TemplateApp {
             });
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add(&mut self.canvas_widget);
-        });
-
         egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                powered_by_egui_and_eframe(ui);
-                egui::warn_if_debug_build(ui);
+            ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::LEFT), |ui| {
                     current_zoom(ui, &self.canvas_resource);
                     current_offset(ui, &self.canvas_resource);
                 });
+                ui.end_row();
+                ui.with_layout(
+                    egui::Layout::left_to_right(egui::Align::LEFT)
+                        .with_main_justify(true)
+                        .with_cross_justify(true),
+                    |ui| {
+                        // 两端对齐
+                        powered_by_egui_and_eframe(ui);
+                        // ui.add_space();
+                        // ui.label("test");
+                        ui.with_layout(Layout::right_to_left(Align::RIGHT), |ui| {
+                            let label = ui.label(
+                                RichText::new("⚠ Debug build ⚠")
+                                    .small()
+                                    .color(ui.visuals().warn_fg_color),
+                            );
+                            label.on_hover_text("egui was compiled with debug assertions enabled.");
+                        });
+                    },
+                );
             });
         });
 
-        // ctx.request_repaint();
+        egui::CentralPanel::default()
+            .frame(egui::Frame::default().outer_margin(egui::Margin::same(3.0)))
+            .show(ctx, |ui| {
+                ui.add(&mut self.canvas_widget);
+            });
+
+        // if let Some(rs) = ctx..as_ref() {
+        //     rs.renderer.write().callback_resources.clear();
+        // }
+        ctx.request_repaint();
     }
 }
 

@@ -3,7 +3,7 @@ use petgraph::graph::EdgeIndex;
 
 use crate::{
     geometry::{edge_offset_direction, intersect_rect_with_pos, IntersectDirection},
-    global::{CanvasStateResource, GraphResource},
+    globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource},
     graph::{
         edge::EdgeType,
         helpers::{get_node_render_info, node_rect_center},

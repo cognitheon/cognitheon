@@ -4,7 +4,7 @@ pub mod app;
 pub mod canvas;
 pub mod colors;
 pub mod geometry;
-pub mod global;
+pub mod globals;
 pub mod graph;
 pub mod particle;
 pub mod ui;

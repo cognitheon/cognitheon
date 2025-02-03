@@ -2,8 +2,9 @@ use egui::*;
 use petgraph::graph::NodeIndex;
 
 use crate::{
-    global::{CanvasStateResource, GraphResource},
-    graph::{edge::EdgeType, node::NodeRenderInfo}, ui::line_edge::LineWidget,
+    globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource},
+    graph::{edge::EdgeType, node::NodeRenderInfo},
+    ui::line_edge::LineWidget,
 };
 
 use super::{

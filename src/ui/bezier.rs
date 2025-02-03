@@ -1,6 +1,6 @@
 use egui::*;
 
-use crate::global::CanvasStateResource;
+use crate::globals::canvas_state_resource::CanvasStateResource;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Anchor {

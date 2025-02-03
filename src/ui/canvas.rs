@@ -5,7 +5,8 @@ use egui::{emath::TSTransform, Id, PointerButton, Widget};
 use petgraph::graph::NodeIndex;
 
 use crate::{
-    global::{CanvasStateResource, GraphResource},
+    geometry::widget_screen_pos,
+    globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource},
     graph::{
         edge::Edge,
         node::{Node, NodeRenderInfo},
@@ -91,18 +92,20 @@ impl CanvasWidget {
     }
 
     pub fn setup_actions(&mut self, ui: &mut egui::Ui, canvas_response: &egui::Response) {
-        // if canvas_response.hovered() {
-        //     let pointer_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
-        //     let rect = canvas_response.rect;
-        //     ui.painter().add(egui_wgpu::Callback::new_paint_callback(
-        //         rect,
-        //         ParticleCallback::new(
-        //             pointer_pos.to_vec2().into(),
-        //             ui.ctx().input(|i| i.stable_dt),
-        //             rect,
-        //         ),
-        //     ));
-        // }
+        if canvas_response.hovered() {
+            let pointer_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
+            let rect = canvas_response.rect;
+            let canvas_widge_pos = widget_screen_pos(pointer_pos, rect);
+            println!("canvas rect: {:?}", rect);
+            ui.painter().add(egui_wgpu::Callback::new_paint_callback(
+                rect,
+                ParticleCallback::new(
+                    canvas_widge_pos.into(),
+                    ui.ctx().input(|i| i.stable_dt),
+                    rect,
+                ),
+            ));
+        }
         // println!("CanvasWidget::setup_actions");
         // 检测右键按下
         let right_mouse_down =

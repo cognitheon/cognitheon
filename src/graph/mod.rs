@@ -3,7 +3,7 @@ pub mod helpers;
 pub mod node;
 pub mod node_render_info;
 
-use crate::global::{CanvasStateResource, GraphResource};
+use crate::globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource};
 use crate::graph::node::Node;
 use crate::ui::bezier::BezierEdge;
 use crate::ui::edge::EdgeWidget;

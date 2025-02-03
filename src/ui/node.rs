@@ -1,4 +1,4 @@
-use crate::global::{CanvasStateResource, GraphResource};
+use crate::globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource};
 use crate::graph::node::NodeRenderInfo;
 use egui::{Id, Sense, Stroke, Widget};
 use petgraph::graph::NodeIndex;
@@ -240,12 +240,16 @@ impl Widget for NodeWidget {
     fn ui(mut self, ui: &mut egui::Ui) -> egui::Response {
         // 对缩放比例进行区间化
         // 对缩放比例进行区间化
-        let scale_level = (self
+        // let scale_level = (self
+        //     .canvas_state_resource
+        //     .read_canvas_state(|canvas_state| canvas_state.transform.scaling)
+        //     * 10.0)
+        //     .ceil()
+        //     / 10.0;
+
+        let scale_level = self
             .canvas_state_resource
-            .read_canvas_state(|canvas_state| canvas_state.transform.scaling)
-            * 10.0)
-            .ceil()
-            / 10.0;
+            .read_canvas_state(|canvas_state| canvas_state.transform.scaling);
         // let node = self.graph.get_node_mut(self.node_id).unwrap();
 
         let text = {
@@ -328,6 +332,7 @@ impl Widget for NodeWidget {
             // 根据rect计算文本位置，使得文本居中
             let text_pos = rect.center();
 
+            // 当前节点正在编辑
             if self
                 .graph_resource
                 .read_graph(|graph| graph.get_editing_node())
@@ -345,6 +350,7 @@ impl Widget for NodeWidget {
                     egui::TextEdit::multiline(&mut text)
                         // .min_size(egui::vec2(min_width, min_height))
                         .desired_rows(1)
+                        // .min_size(egui::vec2(min_width, 2.0))
                         .font(font)
                         .text_color(egui::Color32::RED)
                         .background_color(node_background(ui.ctx().theme()))

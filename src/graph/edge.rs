@@ -3,7 +3,7 @@ use std::fmt::Display;
 use petgraph::graph::NodeIndex;
 
 use crate::{
-    global::CanvasStateResource,
+    globals::canvas_state_resource::CanvasStateResource,
     ui::{
         bezier::{Anchor, BezierEdge},
         line_edge::LineEdge,

@@ -8,6 +8,11 @@ pub enum IntersectDirection {
     Bottom,
 }
 
+pub fn widget_screen_pos(window_pos: Pos2, widget_rect: Rect) -> Pos2 {
+    let vec = window_pos - widget_rect.min;
+    Pos2::new(vec.x, vec.y)
+}
+
 pub fn intersect_rect_simple(
     canvas_rect: Rect,
     canvas_pos: Pos2,
