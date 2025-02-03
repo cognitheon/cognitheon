@@ -8,12 +8,8 @@ pub fn node_border(theme: egui::Theme) -> egui::Color32 {
     }
 }
 
-pub fn node_border_selected(theme: egui::Theme) -> egui::Color32 {
-    if theme == egui::Theme::Light {
-        egui::Color32::from_rgba_premultiplied(222, 78, 78, 200)
-    } else {
-        egui::Color32::from_rgba_premultiplied(222, 78, 78, 200)
-    }
+pub fn node_border_selected(_theme: egui::Theme) -> egui::Color32 {
+    egui::Color32::from_rgba_premultiplied(222, 78, 78, 200)
 }
 
 pub fn node_background(theme: egui::Theme) -> egui::Color32 {
