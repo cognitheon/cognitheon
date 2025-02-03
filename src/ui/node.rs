@@ -27,7 +27,9 @@ impl NodeWidget {
         }
 
         // 检测单击事件
-        if response.clicked() && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
+        if response.clicked()
+            && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
+        {
             println!("node clicked: {:?}", self.node_index);
             self.graph_resource.with_graph(|graph| {
                 if graph.get_editing_node() != Some(self.node_index) {
@@ -257,7 +259,7 @@ impl Widget for NodeWidget {
             })
         };
         let font_size = 20.0 * scale_level; // 你可以调整这个数值
-                                                   // let font_size = 20.0;
+                                            // let font_size = 20.0;
         let font = egui::FontId::new(font_size, egui::FontFamily::Proportional);
 
         let galley = ui
@@ -418,7 +420,7 @@ impl NodeWidget {
         let rect = node_response.rect;
         let text = format!("{:?}", self.node_index.index());
         let font_size = 9.0 * scale_level; // 你可以调整这个数值
-                                                  // let font_size = 20.0;
+                                           // let font_size = 20.0;
         let font = egui::FontId::new(font_size, egui::FontFamily::Proportional);
 
         let galley = ui

@@ -179,6 +179,6 @@ pub fn edge_offset_direction(source_canvas_pos: Pos2, target_canvas_pos: Pos2) -
     let direction = (target_canvas_pos - source_canvas_pos).normalized();
 
     // 计算垂直向量
-    
+
     direction.rot90()
 }

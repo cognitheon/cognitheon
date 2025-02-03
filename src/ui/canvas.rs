@@ -39,26 +39,23 @@ impl CanvasWidget {
 
     pub fn hit_test_node(&self, ui: &mut egui::Ui, screen_pos: egui::Pos2) -> Option<NodeIndex> {
         self.graph_resource.read_graph(|graph| {
-            graph
-                .graph
-                .node_indices()
-                .find(|&node_index| {
-                    let node_render_info: Option<NodeRenderInfo> = ui
-                        .ctx()
-                        .data(|d| d.get_temp(Id::new(node_index.index().to_string())));
-                    // println!("node_render_info: {:?}", node_render_info);
-                    if let Some(node_render_info) = node_render_info {
-                        let node_screen_rect =
-                            self.canvas_state_resource
-                                .read_canvas_state(|canvas_state| {
-                                    canvas_state.to_screen_rect(node_render_info.canvas_rect)
-                                });
-                        if node_screen_rect.contains(screen_pos) {
-                            return true;
-                        }
+            graph.graph.node_indices().find(|&node_index| {
+                let node_render_info: Option<NodeRenderInfo> = ui
+                    .ctx()
+                    .data(|d| d.get_temp(Id::new(node_index.index().to_string())));
+                // println!("node_render_info: {:?}", node_render_info);
+                if let Some(node_render_info) = node_render_info {
+                    let node_screen_rect =
+                        self.canvas_state_resource
+                            .read_canvas_state(|canvas_state| {
+                                canvas_state.to_screen_rect(node_render_info.canvas_rect)
+                            });
+                    if node_screen_rect.contains(screen_pos) {
+                        return true;
                     }
-                    false
-                })
+                }
+                false
+            })
         })
     }
 
