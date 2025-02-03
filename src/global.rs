@@ -16,7 +16,8 @@ impl serde::Serialize for GraphResource {
     where
         S: serde::Serializer,
     {
-        self.0.read().unwrap().graph.serialize(serializer)
+        // println!("serialize");
+        self.0.read().unwrap().serialize(serializer)
     }
 }
 
@@ -25,8 +26,9 @@ impl<'de> serde::Deserialize<'de> for GraphResource {
     where
         D: serde::Deserializer<'de>,
     {
-        let graph = Graph::deserialize(deserializer)?;
-        Ok(Self(Arc::new(RwLock::new(graph))))
+        let result = Graph::deserialize(deserializer);
+        // println!("result: {:?}", result);
+        Ok(Self(Arc::new(RwLock::new(result.unwrap()))))
     }
 }
 

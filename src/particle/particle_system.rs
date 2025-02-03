@@ -166,7 +166,8 @@ impl ParticleSystem {
     }
 
     /// 每帧更新逻辑（CPU 端）
-    pub fn update_particles(&mut self, dt: f32, mouse_pos: Option<[f32; 2]>, rect: egui::Rect) {
+    pub fn update_particles(&mut self, dt: f32, mouse_pos: Option<[f32; 2]>, _rect: egui::Rect) {
+        // println!("dt: {:?}", dt);
         // 衰减所有已存在的粒子寿命
         for p in &mut self.particles {
             if p.life > 0.0 {

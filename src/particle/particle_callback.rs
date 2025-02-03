@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use eframe::{
     egui_wgpu::{CallbackResources, CallbackTrait, ScreenDescriptor},
     wgpu::{self, CommandBuffer, CommandEncoder, RenderPass},
@@ -27,7 +25,7 @@ impl ParticleCallback {
 impl CallbackTrait for ParticleCallback {
     fn prepare(
         &self,
-        device: &wgpu::Device,
+        _device: &wgpu::Device,
         queue: &wgpu::Queue,
         _screen_descriptor: &ScreenDescriptor,
         _encoder: &mut CommandEncoder,

@@ -8,7 +8,7 @@ use crate::particle::particle_system::ParticleSystem;
 use crate::ui::canvas::CanvasWidget;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct TemplateApp {
     // Example stuff:
@@ -21,8 +21,6 @@ pub struct TemplateApp {
     graph_resource: GraphResource,
     #[serde(skip)]
     canvas_widget: CanvasWidget,
-    #[serde(skip)]
-    particle_system: Option<ParticleSystem>,
 }
 
 // impl Debug for TemplateApp {
@@ -43,8 +41,7 @@ impl Default for TemplateApp {
             // edge_type: EdgeType::Line,
             canvas_resource: canvas_resource.clone(),
             graph_resource: graph_resource.clone(),
-            canvas_widget: CanvasWidget::new(None, graph_resource.clone(), canvas_resource.clone()),
-            particle_system: None,
+            canvas_widget: CanvasWidget::new(graph_resource.clone(), canvas_resource.clone()),
         }
     }
 }
@@ -62,10 +59,13 @@ impl TemplateApp {
         // }
         setup_font(&cc.egui_ctx);
 
-        let mut app = if let Some(storage) = cc.storage {
+        let app = if let Some(storage) = cc.storage {
             println!("load");
-            let app: TemplateApp = eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
-            // println!("app: {:?}", app);
+            let mut app: TemplateApp =
+                eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+            app.canvas_widget =
+                CanvasWidget::new(app.graph_resource.clone(), app.canvas_resource.clone());
+            println!("app: {:?}", app);
             app
         } else {
             Default::default()
@@ -91,10 +91,6 @@ impl TemplateApp {
                 .write()
                 .callback_resources
                 .insert::<ParticleSystem>(particle_system);
-
-            // app.particle_system = Some(particle_system);
-        } else {
-            app.particle_system = None;
         }
 
         app
@@ -120,6 +116,10 @@ impl eframe::App for TemplateApp {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        println!(
+            "update: {:?}",
+            self.graph_resource.0.read().unwrap().graph.node_count()
+        );
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
 
@@ -186,7 +186,7 @@ impl eframe::App for TemplateApp {
             });
         });
 
-        ctx.request_repaint();
+        // ctx.request_repaint();
     }
 }
 

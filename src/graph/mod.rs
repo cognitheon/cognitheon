@@ -14,19 +14,20 @@ use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 
 use crate::ui::node::NodeWidget;
 
-// #[typetag::serde(tag = "type")]
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Graph {
     pub edge_type: EdgeType,
     pub graph: petgraph::stable_graph::StableGraph<Node, Edge>,
+    #[serde(skip)]
     pub selected_node: Option<NodeIndex>,
+    #[serde(skip)]
     pub editing_node: Option<NodeIndex>,
 }
 
 impl Default for Graph {
     fn default() -> Self {
         Self {
-            edge_type: EdgeType::Bezier,
+            edge_type: EdgeType::Line,
             graph: petgraph::stable_graph::StableGraph::new(),
             selected_node: None,
             editing_node: None,
@@ -115,8 +116,6 @@ pub fn render_graph(
     graph_resource: GraphResource,
     canvas_state_resource: CanvasStateResource,
 ) {
-    // println!("render_graph");
-
     let node_indices = graph_resource.read_graph(|graph| {
         graph
             .graph
@@ -124,6 +123,19 @@ pub fn render_graph(
             .map(|idx| idx)
             .collect::<Vec<NodeIndex>>()
     });
+
+    // println!("node_indices: {:?}", node_indices.len());
+
+    for node_index in node_indices {
+        // println!("node: {}", node_index.index());
+        // Put the node id into the ui
+
+        ui.add(NodeWidget {
+            node_index,
+            graph_resource: graph_resource.clone(),
+            canvas_state_resource: canvas_state_resource.clone(),
+        });
+    }
 
     let edge_indices = graph_resource.read_graph(|graph| {
         graph
@@ -136,19 +148,6 @@ pub fn render_graph(
     for edge_index in edge_indices {
         ui.add(EdgeWidget {
             edge_index,
-            graph_resource: graph_resource.clone(),
-            canvas_state_resource: canvas_state_resource.clone(),
-        });
-    }
-
-    // println!("node_indices: {:?}", node_indices.len());
-
-    for node_index in node_indices {
-        // println!("node: {}", node.id);
-        // Put the node id into the ui
-
-        ui.add(NodeWidget {
-            node_index,
             graph_resource: graph_resource.clone(),
             canvas_state_resource: canvas_state_resource.clone(),
         });

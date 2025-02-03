@@ -23,7 +23,7 @@ fn main() -> eframe::Result {
             wgpu_setup: egui_wgpu::WgpuSetup::CreateNew {
                 supported_backends: wgpu::Backends::all(),
                 power_preference: wgpu::PowerPreference::HighPerformance,
-                device_descriptor: Arc::new(|adapter| wgpu::DeviceDescriptor {
+                device_descriptor: Arc::new(|_adapter| wgpu::DeviceDescriptor {
                     label: Some("egui-wgpu"),
                     ..Default::default()
                 }),
@@ -80,6 +80,7 @@ fn main() {
 
         // Remove the loading text and spinner:
         if let Some(loading_text) = document.get_element_by_id("loading_text") {
+            println!("start_result: {:?}", start_result);
             match start_result {
                 Ok(_) => {
                     loading_text.remove();
@@ -88,6 +89,9 @@ fn main() {
                     loading_text.set_inner_html(
                         "<p> The app has crashed. See the developer console for details. </p>",
                     );
+                    // let e_str = e;
+                    // let error = format!("<p> {} </p>", e);
+                    // loading_text.set_inner_html(&error);
                     panic!("Failed to start eframe: {e:?}");
                 }
             }
