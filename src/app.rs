@@ -6,6 +6,7 @@ use crate::globals::{
     canvas_state_resource::CanvasStateResource, graph_resource::GraphResource,
     particle_system_resource::ParticleSystemResource,
 };
+// use crate::globals::{CanvasStateResource, GraphResource};
 use crate::graph::edge::EdgeType;
 use crate::particle::particle_system::ParticleSystem;
 use crate::ui::canvas::CanvasWidget;
