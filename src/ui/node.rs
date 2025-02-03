@@ -27,16 +27,14 @@ impl NodeWidget {
         }
 
         // 检测单击事件
-        if response.clicked() {
-            if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
-                println!("node clicked: {:?}", self.node_index);
-                self.graph_resource.with_graph(|graph| {
-                    if graph.get_editing_node() != Some(self.node_index) {
-                        graph.set_editing_node(None);
-                    }
-                    graph.set_selected_node(Some(self.node_index));
-                });
-            }
+        if response.clicked() && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
+            println!("node clicked: {:?}", self.node_index);
+            self.graph_resource.with_graph(|graph| {
+                if graph.get_editing_node() != Some(self.node_index) {
+                    graph.set_editing_node(None);
+                }
+                graph.set_selected_node(Some(self.node_index));
+            });
         }
 
         // 处理键盘按键
@@ -50,7 +48,7 @@ impl NodeWidget {
         if ui.input(|i| i.key_pressed(egui::Key::Backspace)) {
             self.graph_resource.with_graph(|graph| {
                 if graph.get_selected_node() == Some(self.node_index)
-                    && !graph.get_editing_node().is_some()
+                    && graph.get_editing_node().is_none()
                 {
                     println!("node deleted: {:?}", self.node_index);
                     graph.remove_node(self.node_index);
@@ -255,10 +253,10 @@ impl Widget for NodeWidget {
         let text = {
             self.graph_resource.with_graph(|graph| {
                 let node = graph.get_node(self.node_index).unwrap();
-                format!("{}", node.text)
+                node.text.to_string()
             })
         };
-        let font_size = 20.0 * scale_level as f32; // 你可以调整这个数值
+        let font_size = 20.0 * scale_level; // 你可以调整这个数值
                                                    // let font_size = 20.0;
         let font = egui::FontId::new(font_size, egui::FontFamily::Proportional);
 
@@ -341,7 +339,7 @@ impl Widget for NodeWidget {
                 let mut text = {
                     self.graph_resource.with_graph(|graph| {
                         let node = graph.get_node(self.node_index).unwrap();
-                        format!("{}", node.text)
+                        node.text.to_string()
                     })
                 };
                 // let mut response = ui.text_edit_singleline(&mut text);
@@ -419,7 +417,7 @@ impl NodeWidget {
             / 10.0;
         let rect = node_response.rect;
         let text = format!("{:?}", self.node_index.index());
-        let font_size = 9.0 * scale_level as f32; // 你可以调整这个数值
+        let font_size = 9.0 * scale_level; // 你可以调整这个数值
                                                   // let font_size = 20.0;
         let font = egui::FontId::new(font_size, egui::FontFamily::Proportional);
 

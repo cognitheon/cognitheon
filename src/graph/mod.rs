@@ -37,8 +37,8 @@ impl Default for Graph {
 
 impl Graph {
     pub fn add_node(&mut self, node: Node) -> NodeIndex {
-        let idx = self.graph.add_node(node);
-        idx
+        
+        self.graph.add_node(node)
     }
 
     pub fn get_node(&self, node_index: NodeIndex) -> Option<&Node> {
@@ -120,7 +120,6 @@ pub fn render_graph(
         graph
             .graph
             .node_indices()
-            .map(|idx| idx)
             .collect::<Vec<NodeIndex>>()
     });
 
@@ -141,7 +140,6 @@ pub fn render_graph(
         graph
             .graph
             .edge_indices()
-            .map(|idx| idx)
             .collect::<Vec<EdgeIndex>>()
     });
 

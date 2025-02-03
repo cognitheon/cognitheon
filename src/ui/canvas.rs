@@ -65,9 +65,7 @@ impl CanvasWidget {
             .data(|d| d.get_temp(Id::new(node_index.index().to_string())));
         // println!("node_render_info: {:?}", node_render_info);
 
-        if node_render_info.is_none() {
-            return None;
-        }
+        node_render_info.as_ref()?;
 
         let mouse_screen_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
         let node_canvas_center = node_render_info.unwrap().canvas_center();

@@ -16,6 +16,6 @@ pub fn node_rect_center(node_index: NodeIndex, ui: &egui::Ui) -> Pos2 {
         .ctx()
         .data(|reader| reader.get_temp(Id::new(node_index.index().to_string())))
         .unwrap();
-    let canvas_center = node_render_info.canvas_center();
-    canvas_center
+    
+    node_render_info.canvas_center()
 }
