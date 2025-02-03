@@ -1,5 +1,6 @@
-use std::sync::atomic::Ordering;
+use std::sync::{atomic::Ordering, Arc};
 
+use eframe::egui_wgpu;
 use egui::{emath::TSTransform, Id, PointerButton, Widget};
 use petgraph::graph::NodeIndex;
 
@@ -9,6 +10,7 @@ use crate::{
         edge::Edge,
         node::{Node, NodeRenderInfo},
     },
+    particle::{particle_callback::ParticleCallback, particle_system::ParticleSystem},
 };
 
 use super::{
@@ -23,14 +25,20 @@ pub struct CanvasWidget {
     temp_edge: Option<TempEdge>,
     graph_resource: GraphResource,
     canvas_state_resource: CanvasStateResource,
+    particle_system: Option<Arc<ParticleSystem>>,
 }
 
 impl CanvasWidget {
-    pub fn new(graph_resource: GraphResource, canvas_state_resource: CanvasStateResource) -> Self {
+    pub fn new(
+        particle_system: Option<Arc<ParticleSystem>>,
+        graph_resource: GraphResource,
+        canvas_state_resource: CanvasStateResource,
+    ) -> Self {
         Self {
             temp_edge: None,
             graph_resource,
             canvas_state_resource,
+            particle_system,
         }
     }
 
@@ -89,6 +97,16 @@ impl CanvasWidget {
     }
 
     pub fn setup_actions(&mut self, ui: &mut egui::Ui, canvas_response: &egui::Response) {
+        let pointer_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
+        let rect = canvas_response.rect;
+        ui.painter().add(egui_wgpu::Callback::new_paint_callback(
+            rect,
+            ParticleCallback::new(
+                pointer_pos.to_vec2().into(),
+                ui.ctx().input(|i| i.stable_dt),
+                rect,
+            ),
+        ));
         // println!("CanvasWidget::setup_actions");
         // 检测右键按下
         let right_mouse_down =

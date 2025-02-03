@@ -4,6 +4,7 @@ use egui::ComboBox;
 
 use crate::global::{CanvasStateResource, GraphResource};
 use crate::graph::edge::EdgeType;
+use crate::particle::particle_system::ParticleSystem;
 use crate::ui::canvas::CanvasWidget;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
@@ -20,6 +21,8 @@ pub struct TemplateApp {
     graph_resource: GraphResource,
     #[serde(skip)]
     canvas_widget: CanvasWidget,
+    #[serde(skip)]
+    particle_system: Option<ParticleSystem>,
 }
 
 // impl Debug for TemplateApp {
@@ -40,7 +43,8 @@ impl Default for TemplateApp {
             // edge_type: EdgeType::Line,
             canvas_resource: canvas_resource.clone(),
             graph_resource: graph_resource.clone(),
-            canvas_widget: CanvasWidget::new(graph_resource.clone(), canvas_resource.clone()),
+            canvas_widget: CanvasWidget::new(None, graph_resource.clone(), canvas_resource.clone()),
+            particle_system: None,
         }
     }
 }
@@ -58,14 +62,42 @@ impl TemplateApp {
         // }
         setup_font(&cc.egui_ctx);
 
-        if let Some(storage) = cc.storage {
+        let mut app = if let Some(storage) = cc.storage {
             println!("load");
-            let app = eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+            let app: TemplateApp = eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
             // println!("app: {:?}", app);
-            return app;
+            app
+        } else {
+            Default::default()
+        };
+
+        let wgpu_render_state = cc.wgpu_render_state.as_ref();
+        if let Some(rs) = wgpu_render_state {
+            let device = &rs.device;
+
+            // 构造我们的粒子系统
+            let particle_system = ParticleSystem::new(
+                device,
+                rs.target_format,
+                2000, // 最大粒子数
+                10,   // 每帧生成多少粒子
+                2.0,  // 粒子最大生命（秒）
+                10.0, // 粒子最大速度
+            );
+            // println!("particle_system: {:?}", particle_system);
+
+            // 注册到资源里，这样在回调里可以获取到
+            rs.renderer
+                .write()
+                .callback_resources
+                .insert::<ParticleSystem>(particle_system);
+
+            // app.particle_system = Some(particle_system);
+        } else {
+            app.particle_system = None;
         }
 
-        Default::default()
+        app
     }
 
     // pub fn get_graph(ctx: &egui::Context) -> &Graph {
@@ -153,6 +185,8 @@ impl eframe::App for TemplateApp {
                 });
             });
         });
+
+        ctx.request_repaint();
     }
 }
 

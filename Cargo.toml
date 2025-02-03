@@ -28,6 +28,8 @@ typetag = "0.2"
 serde = { version = "1", features = ["derive"] }
 
 petgraph = { version = "0.7.1", features = ["serde-1"] }
+bytemuck = "1.21.0"
+rand = "0.9.0"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
