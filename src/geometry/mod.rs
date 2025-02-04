@@ -88,9 +88,9 @@ pub fn intersect_rect_simple(
         } else if pos.y == canvas_rect.min.y {
             dir = IntersectDirection::Top;
         }
-        return Some((pos, dir));
+        Some((pos, dir))
     } else {
-        return None;
+        None
     }
 }
 
@@ -168,9 +168,9 @@ pub fn intersect_rect_with_pos(
         } else if pos.y == canvas_rect.min.y {
             dir = IntersectDirection::Top;
         }
-        return Some((pos, dir));
+        Some((pos, dir))
     } else {
-        return None;
+        None
     }
 }
 
@@ -179,6 +179,6 @@ pub fn edge_offset_direction(source_canvas_pos: Pos2, target_canvas_pos: Pos2) -
     let direction = (target_canvas_pos - source_canvas_pos).normalized();
 
     // 计算垂直向量
-    let offset_dir = direction.rot90();
-    offset_dir
+
+    direction.rot90()
 }

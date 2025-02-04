@@ -194,7 +194,7 @@ impl EdgeWidget {
     }
 }
 
-impl<'a> Widget for EdgeWidget {
+impl Widget for EdgeWidget {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
         self.update_bezier_edge(ui);
         self.update_line_edge(ui);

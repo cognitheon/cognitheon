@@ -37,8 +37,7 @@ impl Default for Graph {
 
 impl Graph {
     pub fn add_node(&mut self, node: Node) -> NodeIndex {
-        let idx = self.graph.add_node(node);
-        idx
+        self.graph.add_node(node)
     }
 
     pub fn get_node(&self, node_index: NodeIndex) -> Option<&Node> {
@@ -116,13 +115,8 @@ pub fn render_graph(
     graph_resource: GraphResource,
     canvas_state_resource: CanvasStateResource,
 ) {
-    let node_indices = graph_resource.read_graph(|graph| {
-        graph
-            .graph
-            .node_indices()
-            .map(|idx| idx)
-            .collect::<Vec<NodeIndex>>()
-    });
+    let node_indices =
+        graph_resource.read_graph(|graph| graph.graph.node_indices().collect::<Vec<NodeIndex>>());
 
     // println!("node_indices: {:?}", node_indices.len());
 
@@ -137,13 +131,8 @@ pub fn render_graph(
         });
     }
 
-    let edge_indices = graph_resource.read_graph(|graph| {
-        graph
-            .graph
-            .edge_indices()
-            .map(|idx| idx)
-            .collect::<Vec<EdgeIndex>>()
-    });
+    let edge_indices =
+        graph_resource.read_graph(|graph| graph.graph.edge_indices().collect::<Vec<EdgeIndex>>());
 
     for edge_index in edge_indices {
         ui.add(EdgeWidget {

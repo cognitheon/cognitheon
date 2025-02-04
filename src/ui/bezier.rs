@@ -87,12 +87,10 @@ impl BezierEdge {
             } else {
                 Vec2::new(-base_offset, 0.0)
             }
+        } else if dir.y > 0.0 {
+            Vec2::new(0.0, base_offset)
         } else {
-            if dir.y > 0.0 {
-                Vec2::new(0.0, base_offset)
-            } else {
-                Vec2::new(0.0, -base_offset)
-            }
+            Vec2::new(0.0, -base_offset)
         };
         let source_handle_out = source.canvas_pos + handle_offset;
         let target_handle_in = target.canvas_pos - handle_offset;

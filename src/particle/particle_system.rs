@@ -4,7 +4,7 @@ use eframe::wgpu::PipelineCompilationOptions;
 use rand::Rng;
 use std::num::NonZeroU64;
 
-use super::particle::Particle;
+use super::particle_impl::Particle;
 
 #[derive(Debug)]
 /// 粒子系统

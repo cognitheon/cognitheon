@@ -55,6 +55,10 @@ pub enum EdgeType {
 
 impl Display for EdgeType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_string())
+        let edge_type_str = match self {
+            EdgeType::Line => "Line",
+            EdgeType::Bezier => "Bezier",
+        };
+        write!(f, "{}", edge_type_str)
     }
 }
