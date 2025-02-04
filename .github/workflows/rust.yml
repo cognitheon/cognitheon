@@ -125,14 +125,18 @@ jobs:
           cargo install cross
           rustup target add ${{ matrix.TARGET }} --toolchain stable
 
-      - name: Build
+      - name: Build for Windows
+        if: matrix.os == 'windows-latest'
         run: |
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            $env:CROSS_NO_WARNINGS=0
-            cross build --verbose --release --target=${{ matrix.TARGET }}
-          else
-            CROSS_NO_WARNINGS=0 cross build --verbose --release --target=${{ matrix.TARGET }}
-          fi
+          $env:CROSS_NO_WARNINGS=0
+          cross build --verbose --release --target=${{ matrix.TARGET }}
+        shell: pwsh
+  
+      - name: Build for macOS and Linux
+        if: matrix.os != 'windows-latest'
+        run: |
+          CROSS_NO_WARNINGS=0 cross build --verbose --release --target=${{ matrix.TARGET }}
+  
 
       - name: Rename
         run: cp target/${{ matrix.TARGET }}/release/eframe_template${{ matrix.EXTENSION }} eframe_template-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
