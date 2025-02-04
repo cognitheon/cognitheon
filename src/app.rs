@@ -132,18 +132,18 @@ impl eframe::App for TemplateApp {
         //     self.graph_resource.0.read().unwrap().graph.node_count()
         // );
 
-        if let Some(particle_system_resource) = &self.particle_system {
-            particle_system_resource.read_particle_system(|particle_system| {
-                println!(
-                    "particle_system: {:?}",
-                    particle_system
-                        .particles
-                        .iter()
-                        .filter(|p| p.life > 0.0)
-                        .count()
-                );
-            });
-        }
+        // if let Some(particle_system_resource) = &self.particle_system {
+        //     particle_system_resource.read_particle_system(|particle_system| {
+        //         println!(
+        //             "particle_system: {:?}",
+        //             particle_system
+        //                 .particles
+        //                 .iter()
+        //                 .filter(|p| p.life > 0.0)
+        //                 .count()
+        //         );
+        //     });
+        // }
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
 
@@ -225,7 +225,7 @@ impl eframe::App for TemplateApp {
         });
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::default().outer_margin(egui::Margin::same(3.0)))
+            // .frame(egui::Frame::default().outer_margin(egui::Margin::same(3.0)))
             .show(ctx, |ui| {
                 ui.add(&mut self.canvas_widget);
             });

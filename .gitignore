@@ -13,4 +13,4 @@ target_wasm
 .lycheecache
 
 
-eframe_template*
+eframe_template*.log

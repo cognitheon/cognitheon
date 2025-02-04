@@ -94,7 +94,7 @@ impl CanvasWidget {
             let pointer_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
             let rect = canvas_response.rect;
             let canvas_widge_pos = widget_screen_pos(pointer_pos, rect);
-            println!("canvas rect: {:?}", rect);
+            // println!("canvas rect: {:?}", rect);
             ui.painter().add(egui_wgpu::Callback::new_paint_callback(
                 rect,
                 ParticleCallback::new(

@@ -1,13 +1,17 @@
 pub mod edge;
 pub mod helpers;
 pub mod node;
+pub mod node_observer;
 pub mod node_render_info;
+
+use std::sync::Arc;
 
 use crate::globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource};
 use crate::graph::node::Node;
 use crate::ui::bezier::BezierEdge;
 use crate::ui::edge::EdgeWidget;
 use crate::ui::line_edge::LineEdge;
+use crate::ui::node_render_observer::NodeRenderObserver;
 use edge::{Edge, EdgeType};
 use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
@@ -124,11 +128,13 @@ pub fn render_graph(
         // println!("node: {}", node_index.index());
         // Put the node id into the ui
 
-        ui.add(NodeWidget {
+        let mut node_widget = NodeWidget::new(
             node_index,
-            graph_resource: graph_resource.clone(),
-            canvas_state_resource: canvas_state_resource.clone(),
-        });
+            graph_resource.clone(),
+            canvas_state_resource.clone(),
+        );
+        node_widget.add_observer(Arc::new(NodeRenderObserver::new(ui.ctx().clone())));
+        ui.add(node_widget);
     }
 
     let edge_indices =

@@ -9,7 +9,7 @@ pub struct Node {
     pub render_info: Option<NodeRenderInfo>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, Debug)]
 pub struct NodeRenderInfo {
     pub canvas_rect: egui::Rect,
 }

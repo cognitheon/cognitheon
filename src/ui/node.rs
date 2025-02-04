@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use crate::globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource};
 use crate::graph::node::NodeRenderInfo;
-use egui::{Id, Sense, Stroke, Widget};
+use crate::graph::node_observer::NodeObserver;
+use egui::{Sense, Stroke, Widget};
 use petgraph::graph::NodeIndex;
 
 use crate::colors::{node_background, node_border, node_border_selected};
@@ -9,11 +12,35 @@ pub struct NodeWidget {
     pub node_index: NodeIndex,
     pub graph_resource: GraphResource,
     pub canvas_state_resource: CanvasStateResource,
+    pub observers: Vec<Arc<dyn NodeObserver>>,
     // pub graph: &'a mut Graph,
     // pub canvas_state: &'a mut CanvasState,
 }
 
 impl NodeWidget {
+    pub fn add_observer(&mut self, observer: Arc<dyn NodeObserver>) {
+        self.observers.push(observer);
+    }
+
+    pub fn remove_observer(&mut self, observer_id: usize) {
+        self.observers.remove(observer_id);
+    }
+}
+
+impl NodeWidget {
+    pub fn new(
+        node_index: NodeIndex,
+        graph_resource: GraphResource,
+        canvas_state_resource: CanvasStateResource,
+    ) -> Self {
+        Self {
+            node_index,
+            graph_resource,
+            canvas_state_resource,
+            observers: vec![],
+        }
+    }
+
     pub fn setup_actions(&mut self, response: &egui::Response, ui: &mut egui::Ui) {
         // self.handle_secondary_drag(ui, response);
 
@@ -393,9 +420,12 @@ impl Widget for NodeWidget {
                 .read_canvas_state(|canvas_state| canvas_state.to_canvas_rect(rect));
             let render_info = NodeRenderInfo { canvas_rect };
 
-            ui.ctx().data_mut(|d| {
-                d.insert_temp(Id::new(self.node_index.index().to_string()), render_info)
+            self.observers.iter().for_each(|observer| {
+                observer.on_node_changed(self.node_index, render_info);
             });
+            // ui.ctx().data_mut(|d| {
+            //     d.insert_temp(Id::new(self.node_index.index().to_string()), render_info)
+            // });
             // self.graph_resource.with_graph(|graph| {
             //     let node = graph.get_node_mut(self.node_index).unwrap();
             //     node.render_info = Some(render_info);

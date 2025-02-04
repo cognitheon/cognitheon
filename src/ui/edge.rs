@@ -34,7 +34,7 @@ impl EdgeWidget {
         let edge_count = self
             .graph_resource
             .read_graph(|graph| graph.edge_count_undirected(src_node_index, dst_node_index));
-        println!("edge_count: {:?}", edge_count);
+        // println!("edge_count: {:?}", edge_count);
 
         // 获取首尾节点中心点
         let src_node_render_info = get_node_render_info(src_node_index, ui);
@@ -46,10 +46,10 @@ impl EdgeWidget {
         let mut src_center = src_node_canvas_center;
         let mut dst_center = dst_node_canvas_center;
 
-        println!("========================");
-        println!("edge_count: {}", edge_count);
-        println!("src_center: {:?}", src_center);
-        println!("dst_center: {:?}", dst_center);
+        // println!("========================");
+        // println!("edge_count: {}", edge_count);
+        // println!("src_center: {:?}", src_center);
+        // println!("dst_center: {:?}", dst_center);
         if edge_count != 1 {
             let offset_dir = edge_offset_direction(src_node_canvas_center, dst_node_canvas_center);
             println!("offset_dir: {:?}", offset_dir);
@@ -57,29 +57,11 @@ impl EdgeWidget {
             // let edge_dir = (dst_node_canvas_center - src_node_canvas_center).normalized();
             src_center += offset_dir * offset_amount;
             dst_center += offset_dir * offset_amount;
-            // // 如果边向量靠右上，则偏移方向靠右下
-            // if edge_dir.x > 0.0 && edge_dir.y < 0.0 {
-            //     // 如果边向量靠右上，则偏移方向靠左下
-            //     src_center -= offset_dir * offset_amount;
-            //     dst_center += offset_dir * offset_amount;
-            // } else if edge_dir.x < 0.0 && edge_dir.y > 0.0 {
-            //     // 如果边向量靠左下，则偏移方向靠右上
-            //     src_center += offset_dir * offset_amount;
-            //     dst_center -= offset_dir * offset_amount;
-            // } else if edge_dir.x > 0.0 && edge_dir.y > 0.0 {
-            //     // 如果边向量靠右下，则偏移方向靠左上
-            //     src_center -= offset_dir * offset_amount;
-            //     dst_center += offset_dir * offset_amount;
-            // } else if edge_dir.x < 0.0 && edge_dir.y < 0.0 {
-            //     // 如果边向量靠左上，则偏移方向靠右上
-            //     src_center += offset_dir * offset_amount;
-            //     dst_center -= offset_dir * offset_amount;
-            // }
         }
 
-        println!("src_center: {:?}", src_center);
-        println!("dst_center: {:?}", dst_center);
-        println!("========================");
+        // println!("src_center: {:?}", src_center);
+        // println!("dst_center: {:?}", dst_center);
+        // println!("========================");
 
         let Some((source_canvas_pos, source_dir)) =
             intersect_rect_with_pos(src_node_render_info.canvas_rect, src_center, dst_center)
@@ -147,7 +129,7 @@ impl EdgeWidget {
         let edge_count = self
             .graph_resource
             .read_graph(|graph| graph.edge_count_undirected(src_node_index, dst_node_index));
-        println!("edge_count: {:?}", edge_count);
+        // println!("edge_count: {:?}", edge_count);
 
         // 获取首尾节点中心点
         let src_node_render_info: NodeRenderInfo = ui
