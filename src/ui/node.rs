@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource};
-use crate::graph::node::NodeRenderInfo;
 use crate::graph::node_observer::NodeObserver;
+use crate::graph::render_info::NodeRenderInfo;
 use egui::{Sense, Stroke, Widget};
 use petgraph::graph::NodeIndex;
 

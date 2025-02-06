@@ -7,7 +7,7 @@ use crate::{
     graph::{
         edge::EdgeType,
         helpers::{get_node_render_info, node_rect_center},
-        node::NodeRenderInfo,
+        render_info::NodeRenderInfo,
     },
 };
 
@@ -38,9 +38,14 @@ impl EdgeWidget {
 
         // 获取首尾节点中心点
         let src_node_render_info = get_node_render_info(src_node_index, ui);
-        let src_node_canvas_center = node_rect_center(src_node_index, ui);
 
         let dst_node_render_info = get_node_render_info(dst_node_index, ui);
+
+        if src_node_render_info.is_none() || dst_node_render_info.is_none() {
+            return;
+        }
+
+        let src_node_canvas_center = node_rect_center(src_node_index, ui);
         let dst_node_canvas_center = node_rect_center(dst_node_index, ui);
 
         let mut src_center = src_node_canvas_center;
@@ -52,7 +57,7 @@ impl EdgeWidget {
         // println!("dst_center: {:?}", dst_center);
         if edge_count != 1 {
             let offset_dir = edge_offset_direction(src_node_canvas_center, dst_node_canvas_center);
-            println!("offset_dir: {:?}", offset_dir);
+            // println!("offset_dir: {:?}", offset_dir);
             let offset_amount = 10.0;
             // let edge_dir = (dst_node_canvas_center - src_node_canvas_center).normalized();
             src_center += offset_dir * offset_amount;
@@ -63,14 +68,18 @@ impl EdgeWidget {
         // println!("dst_center: {:?}", dst_center);
         // println!("========================");
 
-        let Some((source_canvas_pos, source_dir)) =
-            intersect_rect_with_pos(src_node_render_info.canvas_rect, src_center, dst_center)
-        else {
+        let Some((source_canvas_pos, source_dir)) = intersect_rect_with_pos(
+            src_node_render_info.unwrap().canvas_rect,
+            src_center,
+            dst_center,
+        ) else {
             return;
         };
-        let Some((target_canvas_pos, target_dir)) =
-            intersect_rect_with_pos(dst_node_render_info.canvas_rect, dst_center, src_center)
-        else {
+        let Some((target_canvas_pos, target_dir)) = intersect_rect_with_pos(
+            dst_node_render_info.unwrap().canvas_rect,
+            dst_center,
+            src_center,
+        ) else {
             return;
         };
 
@@ -80,7 +89,7 @@ impl EdgeWidget {
             IntersectDirection::Top => Vec2::new(0.0, -30.0),
             IntersectDirection::Bottom => Vec2::new(0.0, 30.0),
         };
-        println!("target_dir: {:?}", target_dir);
+        // println!("target_dir: {:?}", target_dir);
         let handle_offset_target = match target_dir {
             IntersectDirection::Left => Vec2::new(-30.0, 0.0),
             IntersectDirection::Right => Vec2::new(30.0, 0.0),
@@ -88,13 +97,11 @@ impl EdgeWidget {
             IntersectDirection::Bottom => Vec2::new(0.0, 30.0),
         };
 
-        let source_anchor = Anchor::with_handles(
-            source_canvas_pos,
-            source_canvas_pos + handle_offset_source, // handle_in
-            source_canvas_pos + handle_offset_source, // handle_out
+        let source_anchor = Anchor::new_smooth(source_canvas_pos).with_handles(
+            source_canvas_pos + handle_offset_source,
+            source_canvas_pos + handle_offset_source,
         );
-        let target_anchor = Anchor::with_handles(
-            target_canvas_pos,
+        let target_anchor = Anchor::new_smooth(target_canvas_pos).with_handles(
             target_canvas_pos + handle_offset_target,
             target_canvas_pos + handle_offset_target,
         );
@@ -106,7 +113,7 @@ impl EdgeWidget {
         let control_anchors = bezier_edge.control_anchors;
 
         let new_bezier_edge =
-            BezierEdge::new_with_anchors(source_anchor, target_anchor, control_anchors);
+            BezierEdge::new(source_anchor, target_anchor).with_control_anchors(control_anchors);
 
         // let mut new_bezier_edge = BezierEdge::new(
         //     Anchor::new_smooth(source_canvas_pos.unwrap()),
@@ -132,37 +139,39 @@ impl EdgeWidget {
         // println!("edge_count: {:?}", edge_count);
 
         // 获取首尾节点中心点
-        let src_node_render_info: NodeRenderInfo = ui
-            .ctx()
-            .data(|reader| reader.get_temp(Id::new(src_node_index.index().to_string())))
-            .unwrap();
-        let src_node_canvas_center = src_node_render_info.canvas_center();
+        let src_node_render_info: Option<NodeRenderInfo> = get_node_render_info(src_node_index, ui);
 
-        let dst_node_render_info: NodeRenderInfo = ui
-            .ctx()
-            .data(|reader| reader.get_temp(Id::new(dst_node_index.index().to_string())))
-            .unwrap();
-        let dst_node_canvas_center = dst_node_render_info.canvas_center();
+        let dst_node_render_info: Option<NodeRenderInfo> = get_node_render_info(dst_node_index, ui);
+        if src_node_render_info.is_none() || dst_node_render_info.is_none() {
+            return;
+        }
+
+        let src_node_canvas_center = src_node_render_info.unwrap().canvas_center();
+        let dst_node_canvas_center = dst_node_render_info.unwrap().canvas_center();
 
         let mut src_center = src_node_canvas_center;
         let mut dst_center = dst_node_canvas_center;
 
         if edge_count != 1 {
             let offset_dir = edge_offset_direction(src_node_canvas_center, dst_node_canvas_center);
-            println!("offset_dir: {:?}", offset_dir);
+            // println!("offset_dir: {:?}", offset_dir);
             let offset_amount = 10.0;
             src_center += offset_dir * offset_amount;
             dst_center += offset_dir * offset_amount;
         }
 
-        let Some((source_canvas_pos, _source_dir)) =
-            intersect_rect_with_pos(src_node_render_info.canvas_rect, src_center, dst_center)
-        else {
+        let Some((source_canvas_pos, _source_dir)) = intersect_rect_with_pos(
+            src_node_render_info.unwrap().canvas_rect,
+            src_center,
+            dst_center,
+        ) else {
             return;
         };
-        let Some((target_canvas_pos, _target_dir)) =
-            intersect_rect_with_pos(dst_node_render_info.canvas_rect, dst_center, src_center)
-        else {
+        let Some((target_canvas_pos, _target_dir)) = intersect_rect_with_pos(
+            dst_node_render_info.unwrap().canvas_rect,
+            dst_center,
+            src_center,
+        ) else {
             return;
         };
 
@@ -190,10 +199,9 @@ impl Widget for EdgeWidget {
                 let bezier_edge = self.graph_resource.read_graph(|graph| {
                     graph.get_edge(self.edge_index).unwrap().bezier_edge.clone()
                 });
-                ui.add(BezierWidget::new(
+                ui.add(&mut BezierWidget::new(
                     bezier_edge.clone(),
                     self.canvas_state_resource,
-                    None,
                 ))
             }
             EdgeType::Line => {

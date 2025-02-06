@@ -7,11 +7,8 @@ use petgraph::graph::NodeIndex;
 use crate::{
     geometry::widget_screen_pos,
     globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource},
-    graph::{
-        edge::Edge,
-        node::{Node, NodeRenderInfo},
-    },
-    particle::particle_callback::ParticleCallback,
+    gpu_render::particle::particle_callback::ParticleCallback,
+    graph::{edge::Edge, node::Node, render_info::NodeRenderInfo},
 };
 
 use super::{
@@ -77,11 +74,11 @@ impl CanvasWidget {
         Some(TempEdge {
             source: node_index,
             target: TempEdgeTarget::Point(mouse_canvas_pos),
-            bezier_edge: BezierEdge {
-                source_anchor: Anchor::new_smooth(node_canvas_center),
-                target_anchor: Anchor::new_smooth(mouse_canvas_pos),
-                control_anchors: vec![],
-            },
+            bezier_edge: BezierEdge::new(
+                Anchor::new_smooth(node_canvas_center),
+                Anchor::new_smooth(mouse_canvas_pos),
+            )
+            .with_control_anchors(vec![]),
             line_edge: LineEdge {
                 source: Anchor::new_smooth(node_canvas_center),
                 target: Anchor::new_smooth(mouse_canvas_pos),
@@ -144,11 +141,11 @@ impl CanvasWidget {
                         let control_anchors = temp_edge.bezier_edge.control_anchors.clone();
 
                         temp_edge.target = TempEdgeTarget::Point(mouse_canvas_pos);
-                        temp_edge.bezier_edge = BezierEdge {
-                            source_anchor: Anchor::new_smooth(source_canvas_center),
-                            target_anchor: Anchor::new_smooth(mouse_canvas_pos),
-                            control_anchors,
-                        };
+                        temp_edge.bezier_edge = BezierEdge::new(
+                            Anchor::new_smooth(source_canvas_center),
+                            Anchor::new_smooth(mouse_canvas_pos),
+                        )
+                        .with_control_anchors(control_anchors);
                         temp_edge.line_edge = LineEdge {
                             source: Anchor::new_smooth(source_canvas_center),
                             target: Anchor::new_smooth(mouse_canvas_pos),

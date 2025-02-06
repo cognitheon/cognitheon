@@ -14,15 +14,15 @@ fn main() -> eframe::Result {
 
     let native_options = eframe::NativeOptions {
         wgpu_options: egui_wgpu::WgpuConfiguration {
-            present_mode: wgpu::PresentMode::AutoNoVsync,
-            desired_maximum_frame_latency: Some(2),
+            present_mode: wgpu::PresentMode::AutoVsync,
+            desired_maximum_frame_latency: Some(1),
             on_surface_error: Arc::new(|e| {
                 println!("WGPU error: {e:?}");
                 egui_wgpu::SurfaceErrorAction::SkipFrame
             }),
             wgpu_setup: egui_wgpu::WgpuSetup::CreateNew {
                 supported_backends: wgpu::Backends::all(),
-                power_preference: wgpu::PowerPreference::HighPerformance,
+                power_preference: wgpu::PowerPreference::LowPower,
                 device_descriptor: Arc::new(|_adapter| wgpu::DeviceDescriptor {
                     label: Some("egui-wgpu"),
                     ..Default::default()

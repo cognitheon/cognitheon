@@ -112,7 +112,7 @@ impl ParticleSystem {
         let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("particle_shader"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-                "../../assets/particle.wgsl"
+                "../../../assets/particle.wgsl"
             ))),
         });
 
@@ -167,7 +167,7 @@ impl ParticleSystem {
 
     /// 每帧更新逻辑（CPU 端）
     pub fn update_particles(&mut self, dt: f32, mouse_pos: Option<[f32; 2]>, _rect: egui::Rect) {
-        // println!("dt: {:?}", dt);
+        println!("fps: {:?}", 1.0 / dt);
         // 衰减所有已存在的粒子寿命
         for p in &mut self.particles {
             if p.life > 0.0 {

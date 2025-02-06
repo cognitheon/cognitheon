@@ -1,4 +1,4 @@
-use crate::particle::particle_system::ParticleSystem;
+use crate::gpu_render::particle::particle_system::ParticleSystem;
 use std::sync::{Arc, RwLock};
 
 #[derive(Clone, Debug)]

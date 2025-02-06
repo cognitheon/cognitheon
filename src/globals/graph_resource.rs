@@ -28,7 +28,10 @@ impl<'de> serde::Deserialize<'de> for GraphResource {
     {
         let result = Graph::deserialize(deserializer);
         // println!("result: {:?}", result);
-        Ok(Self(Arc::new(RwLock::new(result.unwrap()))))
+        match result {
+            Ok(graph) => Ok(Self(Arc::new(RwLock::new(graph)))),
+            Err(e) => Err(e),
+        }
     }
 }
 

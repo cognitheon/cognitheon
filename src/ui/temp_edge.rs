@@ -3,7 +3,7 @@ use petgraph::graph::NodeIndex;
 
 use crate::{
     globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource},
-    graph::{edge::EdgeType, node::NodeRenderInfo},
+    graph::{edge::EdgeType, render_info::NodeRenderInfo},
     ui::line_edge::LineWidget,
 };
 
@@ -81,10 +81,9 @@ impl<'a> Widget for TempEdgeWidget<'a> {
                 // 计算差异
                 let delta = node_center - source_anchor.canvas_pos;
                 println!("delta: {:?}", delta);
-                ui.add(BezierWidget::new(
+                ui.add(&mut BezierWidget::new(
                     self.temp_edge.bezier_edge.clone(),
                     self.canvas_state_resource,
-                    None,
                 ));
             }
             EdgeType::Line => {

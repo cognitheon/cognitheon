@@ -1,8 +1,8 @@
 use egui::{Context, Id};
 use petgraph::graph::NodeIndex;
 
-use crate::graph::node::NodeRenderInfo;
 use crate::graph::node_observer::NodeObserver;
+use crate::graph::render_info::NodeRenderInfo;
 
 /// 负责更新 context.data 中对应节点渲染信息的观察者
 pub struct NodeRenderObserver {

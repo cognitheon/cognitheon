@@ -7,8 +7,8 @@ use crate::globals::{
     particle_system_resource::ParticleSystemResource,
 };
 // use crate::globals::{CanvasStateResource, GraphResource};
+use crate::gpu_render::particle::particle_system::ParticleSystem;
 use crate::graph::edge::EdgeType;
-use crate::particle::particle_system::ParticleSystem;
 use crate::ui::canvas::CanvasWidget;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.

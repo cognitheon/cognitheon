@@ -2,7 +2,7 @@ pub mod edge;
 pub mod helpers;
 pub mod node;
 pub mod node_observer;
-pub mod node_render_info;
+pub mod render_info;
 
 use std::sync::Arc;
 
