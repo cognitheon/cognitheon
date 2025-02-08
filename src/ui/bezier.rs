@@ -166,8 +166,8 @@ impl BezierWidget {
 
         // 检测控制柄 (HandleIn)
         for (i, anchor) in full_anchors.iter().enumerate() {
-            // 跳过首尾锚点
-            if i == 0 || i == full_anchors.len() - 1 {
+            // 跳过首锚点
+            if i == 0 {
                 continue;
             }
             let offset = world_pos - anchor.handle_in_canvas_pos;
@@ -178,10 +178,11 @@ impl BezierWidget {
         }
         // 检测控制柄 (HandleOut)
         for (i, anchor) in full_anchors.iter().enumerate() {
-            // 跳过首尾锚点
-            if i == 0 || i == full_anchors.len() - 1 {
+            // 跳过尾锚点
+            if i == full_anchors.len() - 1 {
                 continue;
             }
+
             let offset = world_pos - anchor.handle_out_canvas_pos;
             if offset.length() < hit_radius {
                 self.dragging_anchor_index = Some(i);
