@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use egui::{Align, ComboBox, Layout, RichText};
+use egui::{Align, ComboBox, Id, Layout, RichText, Vec2};
 
 use crate::globals::{
     canvas_state_resource::CanvasStateResource, graph_resource::GraphResource,
@@ -9,7 +9,7 @@ use crate::globals::{
 // use crate::globals::{CanvasStateResource, GraphResource};
 use crate::gpu_render::particle::particle_system::ParticleSystem;
 use crate::graph::edge::EdgeType;
-use crate::ui::canvas::CanvasWidget;
+use crate::ui::canvas::data::CanvasWidget;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
@@ -66,17 +66,18 @@ impl TemplateApp {
         // }
         setup_font(&cc.egui_ctx);
 
-        let mut app = if let Some(storage) = cc.storage {
-            println!("load");
-            let mut app: TemplateApp =
-                eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
-            app.canvas_widget =
-                CanvasWidget::new(app.graph_resource.clone(), app.canvas_resource.clone());
-            println!("app: {:?}", app);
-            app
-        } else {
-            Default::default()
-        };
+        // let mut app = if let Some(storage) = cc.storage {
+        //     println!("load");
+        //     let mut app: TemplateApp =
+        //         eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+        //     app.canvas_widget =
+        //         CanvasWidget::new(app.graph_resource.clone(), app.canvas_resource.clone());
+        //     println!("app: {:?}", app);
+        //     app
+        // } else {
+        //     Default::default()
+        // };
+        let mut app: TemplateApp = Default::default();
 
         let wgpu_render_state = cc.wgpu_render_state.as_ref();
         if let Some(rs) = wgpu_render_state {
@@ -127,6 +128,19 @@ impl eframe::App for TemplateApp {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let last_offset: f32 =
+            if let Some(offset) = ctx.data(|m| m.get_temp(Id::new("animation_offset"))) {
+                offset
+            } else {
+                0.0
+            };
+
+        let delta_time = ctx.input(|i| i.stable_dt).min(0.1); // 稳定的一帧时间
+        let speed = 40.0; // 像素/秒
+
+        // 每帧更新 offset
+        let new_offset = last_offset + speed * delta_time;
+        ctx.data_mut(|m| m.insert_temp(Id::new("animation_offset"), new_offset));
         // println!(
         //     "update: {:?}",
         //     self.graph_resource.0.read().unwrap().graph.node_count()
@@ -169,6 +183,9 @@ impl eframe::App for TemplateApp {
 
                 if ui.button("test").clicked() {
                     println!("test");
+                    // egui::Window::new("test").show(ctx, |ui| {
+                    //     ui.label("test");
+                    // });
                 }
 
                 let mut edge_type = self
@@ -228,8 +245,19 @@ impl eframe::App for TemplateApp {
             // .frame(egui::Frame::default().outer_margin(egui::Margin::same(3.0)))
             .show(ctx, |ui| {
                 ui.add(&mut self.canvas_widget);
+
+                egui::Window::new("test")
+                    .default_size(Vec2::new(800.0, 600.0))
+                    .show(ctx, |ui| {
+                        ui.label("test");
+                    });
             });
 
+        // ctx.show_viewport_deferred(
+        //     ViewportId::from_hash_of("test"),
+        //     ViewportBuilder::default().with_title("testwindow"),
+        //     |ctx, _viewport_class| {},
+        // );
         // if let Some(rs) = ctx..as_ref() {
         //     rs.renderer.write().callback_resources.clear();
         // }

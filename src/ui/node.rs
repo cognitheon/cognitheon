@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource};
 use crate::graph::node_observer::NodeObserver;
 use crate::graph::render_info::NodeRenderInfo;
-use egui::{Sense, Stroke, Widget};
+use egui::{Id, Sense, Stroke, Widget};
 use petgraph::graph::NodeIndex;
 
 use crate::colors::{node_background, node_border, node_border_selected};
@@ -42,6 +42,10 @@ impl NodeWidget {
     }
 
     pub fn setup_actions(&mut self, response: &egui::Response, ui: &mut egui::Ui) {
+        let input_busy = ui.ctx().data(|d| d.get_temp(Id::new("input_busy")));
+        if input_busy.is_some() && input_busy.unwrap() {
+            return;
+        }
         // self.handle_secondary_drag(ui, response);
 
         // self.handle_secondary_drag(ui, response);
@@ -62,23 +66,22 @@ impl NodeWidget {
                 if graph.get_editing_node() != Some(self.node_index) {
                     graph.set_editing_node(None);
                 }
-                graph.set_selected_node(Some(self.node_index));
+                graph.selected_nodes.clear();
+                graph.select_node(self.node_index);
             });
         }
 
         // 处理键盘按键
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.graph_resource.with_graph(|graph| {
-                graph.set_selected_node(None);
+                graph.selected_nodes.clear();
                 graph.set_editing_node(None);
             });
         }
 
         if ui.input(|i| i.key_pressed(egui::Key::Backspace)) {
             self.graph_resource.with_graph(|graph| {
-                if graph.get_selected_node() == Some(self.node_index)
-                    && graph.get_editing_node().is_none()
-                {
+                if graph.selected_nodes.contains(&self.node_index) && graph.editing_node.is_none() {
                     println!("node deleted: {:?}", self.node_index);
                     graph.remove_node(self.node_index);
                 }
@@ -338,8 +341,7 @@ impl Widget for NodeWidget {
 
             if self
                 .graph_resource
-                .read_graph(|graph| graph.get_selected_node())
-                == Some(self.node_index)
+                .read_graph(|graph| graph.selected_nodes.contains(&self.node_index))
             {
                 painter.rect(
                     selected_rect,

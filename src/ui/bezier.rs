@@ -2,6 +2,8 @@ use egui::*;
 
 use crate::globals::canvas_state_resource::CanvasStateResource;
 
+use super::helpers::draw_dashed_rect_with_offset;
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Anchor {
     pub canvas_pos: egui::Pos2,            // 锚点坐标
@@ -588,17 +590,39 @@ impl BezierWidget {
         }
     }
 
-    pub fn draw_bounding_rect(&self, painter: &egui::Painter) {
+    pub fn draw_bounding_rect(&mut self, ui: &mut Ui) {
+        let painter = ui.painter();
         let bounding_rect = self.bounding_rect(100);
         let screen_rect = self
             .canvas_state_resource
             .read_canvas_state(|canvas_state| canvas_state.to_screen_rect(bounding_rect));
-        painter.rect(
+
+        // 这里记录 offset 并且在每帧累加
+        // 比如让它每秒增加 120 像素，“速度”可以自己调
+        // let delta_time = ui.input(|i| i.stable_dt).min(0.1); // 稳定的一帧时间
+        // let speed = 120.0; // 像素/秒
+
+        // 每帧更新 offset
+        let offset: f32 = ui
+            .ctx()
+            .data(|d| d.get_temp(Id::new("animation_offset")))
+            .unwrap_or(0.0);
+
+        // println!("offset: {:?}", offset);
+        draw_dashed_rect_with_offset(
+            painter,
             screen_rect,
-            0.0,
-            egui::Color32::TRANSPARENT,
             Stroke::new(1.0, egui::Color32::ORANGE),
+            10.0,
+            10.0,
+            offset,
         );
+        // painter.rect(
+        //     screen_rect,
+        //     0.0,
+        //     egui::Color32::TRANSPARENT,
+        //     Stroke::new(1.0, egui::Color32::ORANGE),
+        // );
     }
 }
 
@@ -621,7 +645,7 @@ impl Widget for &mut BezierWidget {
         let response = ui.allocate_rect(screen_rect, Sense::click_and_drag());
 
         self.draw_bezier(ui);
-        self.draw_bounding_rect(ui.painter());
+        self.draw_bounding_rect(ui);
         // ui.painter().rect(
         //     response.rect,
         //     0.0,

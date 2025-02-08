@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use crate::graph::Graph;
+use crate::graph::graph_impl::Graph;
 
 #[derive(Clone, Debug)]
 pub struct GraphResource(pub Arc<RwLock<Graph>>);
