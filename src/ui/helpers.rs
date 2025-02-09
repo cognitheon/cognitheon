@@ -107,7 +107,7 @@ pub fn draw_dashed_rect_with_offset(
     );
 }
 
-/// 绘制一条从 `start` 到 `end` 的“虚线段”，并带有一个动画相位偏移 `offset`
+/// 绘制一条从 `start` 到 `end` 的"虚线段"，并带有一个动画相位偏移 `offset`
 pub fn draw_dashed_line_with_offset(
     painter: &Painter,
     start: Pos2,
@@ -128,14 +128,14 @@ pub fn draw_dashed_line_with_offset(
     let pattern_length = dash_length + gap_length;
 
     // 把 offset 缩放/取模到 [0, pattern_length)，避免越走越大
-    let offset = offset.rem_euclid(pattern_length);
+    let offset = -offset.rem_euclid(pattern_length);
     // println!("offset: {:?}", offset);
 
-    // 在“pattern 空间”里，我们想要覆盖区间 [offset, offset + total_length]
+    // 在"pattern 空间"里，我们想要覆盖区间 [offset, offset + total_length]
     let end_pattern = offset + total_length;
 
     // 步进循环
-    let mut t = offset;
+    let mut t = -offset;
     while t < end_pattern {
         // dash 段的起点、终点（在 pattern 空间坐标）
         let dash_start = t;
@@ -144,14 +144,14 @@ pub fn draw_dashed_line_with_offset(
         // 下一个循环
         t += pattern_length;
 
-        // 这里要把 dash_start~dash_end 截断到 [offset, end_pattern] 内
-        let clipped_dash_start = dash_start.clamp(offset, end_pattern);
-        let clipped_dash_end = dash_end.clamp(offset, end_pattern);
+        // 这里要把 dash_start~dash_end 截断到 [0, total_length] 内
+        let clipped_dash_start = dash_start.clamp(0.0, total_length);
+        let clipped_dash_end = dash_end.clamp(0.0, total_length);
 
         // 只有当这段长度 > 0 时，才需要画
         if clipped_dash_end > clipped_dash_start {
-            let start_dist = clipped_dash_start - offset;
-            let end_dist = clipped_dash_end - offset;
+            let start_dist = clipped_dash_start;
+            let end_dist = clipped_dash_end;
 
             // 将这段距离映射回真实世界坐标
             let real_start = start + direction * start_dist;

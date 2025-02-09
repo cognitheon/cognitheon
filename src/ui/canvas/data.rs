@@ -1,3 +1,5 @@
+use egui::Pos2;
+
 use crate::{
     globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource},
     input::input_state::InputState,
@@ -11,6 +13,7 @@ pub struct CanvasWidget {
     pub canvas_state_resource: CanvasStateResource,
     pub input_state: InputState,
     pub input_busy: bool,
+    pub drag_select_range: Option<[Pos2; 2]>,
 }
 
 impl CanvasWidget {
@@ -21,6 +24,7 @@ impl CanvasWidget {
             canvas_state_resource,
             input_state: InputState::default(),
             input_busy: false,
+            drag_select_range: None,
         }
     }
 }

@@ -22,6 +22,8 @@ impl CanvasWidget {
     }
 
     pub fn post_render_actions(&mut self, ui: &mut egui::Ui, canvas_response: &egui::Response) {
+        self.handle_drag_select(ui, canvas_response);
+
         // 处理双击
         if canvas_response.hovered() {
             if ui.input(|i: &egui::InputState| {
@@ -182,4 +184,10 @@ pub fn make_input_busy(ui: &mut egui::Ui) {
 pub fn make_input_idle(ui: &mut egui::Ui) {
     ui.ctx()
         .data_mut(|d| d.insert_temp(Id::new("input_busy"), false));
+}
+
+pub fn is_input_busy(ui: &mut egui::Ui) -> bool {
+    ui.ctx()
+        .data(|d| d.get_temp(Id::new("input_busy")))
+        .unwrap_or(false)
 }

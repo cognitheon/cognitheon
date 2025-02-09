@@ -297,7 +297,7 @@ impl BezierWidget {
                 | DragType::HandleOut
                 | DragType::MoveBezier => {
                     // 根据不同的 DragType 设置不同的鼠标样式 (可选)
-                    // ui.output_mut(|o| o.cursor_icon = CursorIcon::Grab);
+                    ui.output_mut(|o| o.cursor_icon = CursorIcon::Grab);
                 }
                 DragType::None => {
                     // 恢复默认鼠标样式 (可选)

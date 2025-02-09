@@ -1,6 +1,6 @@
-use egui::Widget;
+use egui::{Color32, Id, Pos2, Stroke, Widget};
 
-use crate::ui::temp_edge::TempEdgeWidget;
+use crate::ui::{helpers::draw_dashed_line_with_offset, temp_edge::TempEdgeWidget};
 
 use super::{data::CanvasWidget, helpers::draw_grid};
 
@@ -27,13 +27,27 @@ impl Widget for &mut CanvasWidget {
             });
         }
 
-        // graph_resource.read_graph(|graph| {
+        // self.graph_resource.with_graph(|graph| {
         crate::graph::graph_impl::render_graph(
             ui,
             self.graph_resource.clone(),
             self.canvas_state_resource.clone(),
         );
         // });
+
+        let offset: f32 = ui
+            .data(|d| d.get_temp(Id::new("animation_offset")))
+            .unwrap_or(0.0);
+
+        draw_dashed_line_with_offset(
+            ui.painter(),
+            Pos2::new(100.0, 100.0),
+            Pos2::new(300.0, 100.0),
+            Stroke::new(2.0, Color32::ORANGE),
+            10.0,
+            5.0,
+            offset,
+        );
 
         self.post_render_actions(ui, &canvas_response);
 

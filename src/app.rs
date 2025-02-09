@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use egui::{Align, ComboBox, Id, Layout, RichText, Vec2};
+use egui::{Align, ComboBox, Id, Layout, RichText};
 
 use crate::globals::{
     canvas_state_resource::CanvasStateResource, graph_resource::GraphResource,
@@ -246,11 +246,11 @@ impl eframe::App for TemplateApp {
             .show(ctx, |ui| {
                 ui.add(&mut self.canvas_widget);
 
-                egui::Window::new("test")
-                    .default_size(Vec2::new(800.0, 600.0))
-                    .show(ctx, |ui| {
-                        ui.label("test");
-                    });
+                // egui::Window::new("test")
+                //     .default_size(Vec2::new(800.0, 600.0))
+                //     .show(ctx, |ui| {
+                //         ui.label("test");
+                //     });
             });
 
         // ctx.show_viewport_deferred(
