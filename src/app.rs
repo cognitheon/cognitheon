@@ -139,7 +139,7 @@ impl eframe::App for TemplateApp {
         let speed = 40.0; // 像素/秒
 
         // 每帧更新 offset
-        let new_offset = last_offset + speed * delta_time;
+        let new_offset = last_offset - speed * delta_time;
         ctx.data_mut(|m| m.insert_temp(Id::new("animation_offset"), new_offset));
         // println!(
         //     "update: {:?}",

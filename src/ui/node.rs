@@ -79,7 +79,7 @@ impl NodeWidget {
             });
         }
 
-        if ui.input(|i| i.key_pressed(egui::Key::Backspace)) {
+        if ui.input(|i| i.key_pressed(egui::Key::Backspace) || i.key_pressed(egui::Key::Delete)) {
             self.graph_resource.with_graph(|graph| {
                 if graph.selected_nodes.contains(&self.node_index) && graph.editing_node.is_none() {
                     println!("node deleted: {:?}", self.node_index);

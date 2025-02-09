@@ -128,15 +128,15 @@ pub fn draw_dashed_line_with_offset(
     let pattern_length = dash_length + gap_length;
 
     // 把 offset 缩放/取模到 [0, pattern_length)，避免越走越大
-    let offset = -offset.rem_euclid(pattern_length);
+    let offset = offset.rem_euclid(pattern_length);
     // println!("offset: {:?}", offset);
 
     // 在"pattern 空间"里，我们想要覆盖区间 [offset, offset + total_length]
-    let end_pattern = offset + total_length;
+    // let end_pattern = offset + total_length;
 
     // 步进循环
     let mut t = -offset;
-    while t < end_pattern {
+    while t < total_length {
         // dash 段的起点、终点（在 pattern 空间坐标）
         let dash_start = t;
         let dash_end = t + dash_length;
@@ -150,12 +150,12 @@ pub fn draw_dashed_line_with_offset(
 
         // 只有当这段长度 > 0 时，才需要画
         if clipped_dash_end > clipped_dash_start {
-            let start_dist = clipped_dash_start;
-            let end_dist = clipped_dash_end;
+            // let start_dist = clipped_dash_start;
+            // let end_dist = clipped_dash_end;
 
             // 将这段距离映射回真实世界坐标
-            let real_start = start + direction * start_dist;
-            let real_end = start + direction * end_dist;
+            let real_start = start + direction * clipped_dash_start;
+            let real_end = start + direction * clipped_dash_end;
 
             // 绘制这段线
             painter.line_segment([real_start, real_end], stroke);

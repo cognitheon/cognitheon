@@ -49,6 +49,8 @@ impl Widget for &mut CanvasWidget {
             offset,
         );
 
+        self.update_selected_nodes();
+
         self.post_render_actions(ui, &canvas_response);
 
         canvas_response

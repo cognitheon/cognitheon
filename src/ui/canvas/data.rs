@@ -1,4 +1,5 @@
-use egui::Pos2;
+use egui::{Pos2, Rect};
+use petgraph::graph::NodeIndex;
 
 use crate::{
     globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource},
@@ -25,6 +26,55 @@ impl CanvasWidget {
             input_state: InputState::default(),
             input_busy: false,
             drag_select_range: None,
+        }
+    }
+
+    pub fn update_selected_nodes(&mut self) {
+        if self.drag_select_range.is_some() {
+            let range = self.drag_select_range.unwrap();
+            let start_canvas = self
+                .canvas_state_resource
+                .read_canvas_state(|canvas_state| canvas_state.to_canvas(range[0]));
+            let end_canvas = self
+                .canvas_state_resource
+                .read_canvas_state(|canvas_state| canvas_state.to_canvas(range[1]));
+
+            let min_canvas_pos = Pos2::new(
+                start_canvas.x.min(end_canvas.x),
+                start_canvas.y.min(end_canvas.y),
+            );
+            let max_canvas_pos = Pos2::new(
+                start_canvas.x.max(end_canvas.x),
+                start_canvas.y.max(end_canvas.y),
+            );
+
+            let node_indices = self.graph_resource.read_graph(|graph| {
+                graph
+                    .graph
+                    .node_indices()
+                    .collect::<Vec<NodeIndex>>()
+                    .iter()
+                    .filter(|&node_index| {
+                        let node = graph.get_node(*node_index).unwrap();
+                        let node_pos =
+                            self.canvas_state_resource
+                                .read_canvas_state(|canvas_state| {
+                                    canvas_state.to_canvas(node.position)
+                                });
+                        node_pos.x >= min_canvas_pos.x
+                            && node_pos.x <= max_canvas_pos.x
+                            && node_pos.y >= min_canvas_pos.y
+                            && node_pos.y <= max_canvas_pos.y
+                    })
+                    .copied()
+                    .collect::<Vec<NodeIndex>>()
+            });
+
+            println!("node_indices: {:?}", node_indices);
+            self.graph_resource.with_graph(|graph| {
+                graph.selected_nodes.clear();
+                graph.selected_nodes.extend(node_indices);
+            });
         }
     }
 }
