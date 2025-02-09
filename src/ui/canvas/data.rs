@@ -30,8 +30,7 @@ impl CanvasWidget {
     }
 
     pub fn update_selected_nodes(&mut self) {
-        if self.drag_select_range.is_some() {
-            let range = self.drag_select_range.unwrap();
+        if let Some(range) = self.drag_select_range {
             let start_canvas = self
                 .canvas_state_resource
                 .read_canvas_state(|canvas_state| canvas_state.to_canvas(range[0]));
@@ -56,11 +55,7 @@ impl CanvasWidget {
                     .iter()
                     .filter(|&node_index| {
                         let node = graph.get_node(*node_index).unwrap();
-                        let node_pos =
-                            self.canvas_state_resource
-                                .read_canvas_state(|canvas_state| {
-                                    canvas_state.to_canvas(node.position)
-                                });
+                        let node_pos = node.position;
                         node_pos.x >= min_canvas_pos.x
                             && node_pos.x <= max_canvas_pos.x
                             && node_pos.y >= min_canvas_pos.y

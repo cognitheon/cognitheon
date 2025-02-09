@@ -85,6 +85,7 @@ impl CanvasWidget {
         }
     }
 
+    /// 处理拖拽选择
     pub fn handle_drag_select(&mut self, ui: &mut egui::Ui, canvas_response: &Response) {
         if is_input_busy(ui) {
             return;
@@ -100,7 +101,7 @@ impl CanvasWidget {
 
                 let painter = ui.painter();
 
-                let rect = Rect::from_min_max(
+                let screen_rect = Rect::from_min_max(
                     self.drag_select_range.unwrap()[0],
                     self.drag_select_range.unwrap()[1],
                 );
@@ -109,7 +110,7 @@ impl CanvasWidget {
                     .unwrap_or(0.0);
                 draw_dashed_rect_with_offset(
                     painter,
-                    rect,
+                    screen_rect,
                     Stroke::new(1.0, Color32::ORANGE),
                     10.0,
                     5.0,
