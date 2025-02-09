@@ -1,28 +1,26 @@
-use egui::{emath::TSTransform, Color32, Id, Rect, Response, Stroke};
+use egui::{emath::TSTransform, Color32, Id, Pos2, Rect, Response, Stroke};
 
 use crate::ui::helpers::draw_dashed_rect_with_offset;
 
 use super::{
     data::CanvasWidget,
     input::{is_input_busy, make_input_busy, make_input_idle},
-    input_detector::{
-        drag_select, primary_button_down, scrolling, space_pressed, space_released, zooming,
-    },
 };
 
 impl CanvasWidget {
     pub fn handle_pan(&mut self, ui: &mut egui::Ui) {
         // 处理拖拽平移
-        if space_pressed(ui) {
+        if CanvasWidget::space_pressed(ui) {
             // 设置鼠标指针为手型
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
             // println!("handle_pan");
             make_input_busy(ui);
 
-            if primary_button_down(ui) {
+            if CanvasWidget::primary_button_down(ui) {
                 self.canvas_state_resource
                     .with_canvas_state(|canvas_state| {
                         // drag_delta() 表示本次帧被拖拽的增量
+
                         let drag_delta = ui.input(|i| i.pointer.delta());
 
                         canvas_state.transform.translation += drag_delta;
@@ -31,7 +29,7 @@ impl CanvasWidget {
         }
 
         // 处理滚动平移
-        if let Some(scroll_delta) = scrolling(ui) {
+        if let Some(scroll_delta) = CanvasWidget::scrolling(ui) {
             self.canvas_state_resource
                 .with_canvas_state(|canvas_state| {
                     canvas_state.transform.translation += scroll_delta;
@@ -39,7 +37,7 @@ impl CanvasWidget {
             make_input_busy(ui);
         }
 
-        if space_released(ui) {
+        if CanvasWidget::space_released(ui) {
             make_input_idle(ui);
             ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
         }
@@ -47,7 +45,7 @@ impl CanvasWidget {
 
     pub fn handle_scale(&mut self, ui: &mut egui::Ui) {
         // 处理缩放
-        if zooming(ui) {
+        if CanvasWidget::zooming(ui) {
             // 计算鼠标指针相对于画布原点的偏移
             self.canvas_state_resource
                 .with_canvas_state(|canvas_state| {
@@ -91,7 +89,11 @@ impl CanvasWidget {
             return;
         }
 
-        if drag_select(ui, canvas_response) {
+        if CanvasWidget::drag_select(ui, canvas_response) {
+            self.graph_resource.with_graph(|graph| {
+                graph.set_editing_node(None);
+            });
+
             if self.drag_select_range.is_none() {
                 let mouse_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
                 self.drag_select_range = Some([mouse_pos, mouse_pos]);
@@ -125,6 +127,37 @@ impl CanvasWidget {
         }
         if ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary)) {
             self.drag_select_range = None;
+        }
+    }
+
+    pub fn handle_escape(&mut self, ui: &mut egui::Ui, canvas_response: &Response) {
+        if CanvasWidget::escape(ui, canvas_response) {
+            self.drag_select_range = None;
+            self.graph_resource.with_graph(|graph| {
+                graph.selected.clear();
+                graph.set_editing_node(None);
+            });
+        }
+    }
+
+    pub fn handle_tab(&mut self, ui: &mut egui::Ui) {
+        if self.tab_pressed(ui) {
+            let selected_node_indices = self
+                .graph_resource
+                .read_graph(|graph| graph.get_selected_nodes());
+
+            let src_node_canvas_pos_vec = selected_node_indices
+                .iter()
+                .map(|index| {
+                    self.canvas_state_resource
+                        .read_canvas_state(|canvas_state| {
+                            canvas_state.to_canvas(
+                                self.graph_resource
+                                    .read_graph(|graph| graph.get_node(*index).unwrap().position),
+                            )
+                        })
+                })
+                .collect::<Vec<Pos2>>();
         }
     }
 }

@@ -12,13 +12,14 @@ use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 use crate::ui::node::NodeWidget;
 
 use super::edge::{Edge, EdgeType};
+use super::selection::GraphSelection;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Graph {
     pub edge_type: EdgeType,
     pub graph: petgraph::stable_graph::StableGraph<Node, Edge>,
     #[serde(skip)]
-    pub selected_nodes: Vec<NodeIndex>,
+    pub selected: GraphSelection,
     #[serde(skip)]
     pub editing_node: Option<NodeIndex>,
 }
@@ -28,7 +29,7 @@ impl Default for Graph {
         Self {
             edge_type: EdgeType::Line,
             graph: petgraph::stable_graph::StableGraph::new(),
-            selected_nodes: vec![],
+            selected: GraphSelection::None,
             editing_node: None,
         }
     }
@@ -39,6 +40,26 @@ impl Graph {
         self.graph.add_node(node)
     }
 
+    pub fn add_node_with_edge(
+        &mut self,
+        node: Node,
+        src_node_index: NodeIndex,
+        canvas_state_resource: CanvasStateResource,
+    ) -> NodeIndex {
+        let node = node.clone();
+        let dst_node_index = self.add_node(node.clone());
+        let src_node = self.get_node(src_node_index).unwrap();
+
+        self.add_edge(Edge::new(
+            src_node_index,
+            dst_node_index,
+            src_node.position,
+            node.clone().position,
+            canvas_state_resource,
+        ));
+        dst_node_index
+    }
+
     pub fn get_node(&self, node_index: NodeIndex) -> Option<&Node> {
         self.graph.node_weight(node_index)
     }
@@ -47,12 +68,25 @@ impl Graph {
         self.graph.node_weight_mut(node_index)
     }
 
-    pub fn get_selected_nodes(&self) -> &Vec<NodeIndex> {
-        &self.selected_nodes
+    pub fn get_selected_nodes(&self) -> Vec<NodeIndex> {
+        match &self.selected {
+            GraphSelection::Node(nodes) => nodes.clone(),
+            _ => vec![],
+        }
     }
 
     pub fn select_node(&mut self, node_index: NodeIndex) {
-        self.selected_nodes.push(node_index);
+        match &mut self.selected {
+            GraphSelection::Node(nodes) => nodes.push(node_index),
+            _ => self.selected = GraphSelection::Node(vec![node_index]),
+        }
+    }
+
+    pub fn select_nodes(&mut self, nodes: Vec<NodeIndex>) {
+        match &mut self.selected {
+            GraphSelection::Node(selected_nodes) => selected_nodes.extend(nodes),
+            _ => self.selected = GraphSelection::Node(nodes),
+        }
     }
 
     pub fn get_editing_node(&self) -> Option<NodeIndex> {
@@ -72,6 +106,13 @@ impl Graph {
 }
 
 impl Graph {
+    pub fn select_edge(&mut self, edge_index: EdgeIndex) {
+        match &mut self.selected {
+            GraphSelection::Edge(edges) => edges.push(edge_index),
+            _ => self.selected = GraphSelection::Edge(vec![edge_index]),
+        }
+    }
+
     pub fn add_edge(&mut self, edge: Edge) {
         self.graph.add_edge(edge.source, edge.target, edge);
     }
@@ -109,6 +150,14 @@ impl Graph {
     }
 }
 
+impl Graph {
+    pub fn reset(&mut self) {
+        self.graph = petgraph::stable_graph::StableGraph::new();
+        self.selected = GraphSelection::None;
+        self.editing_node = None;
+    }
+}
+
 pub fn render_graph(
     ui: &mut egui::Ui,
     graph_resource: GraphResource,
@@ -118,6 +167,17 @@ pub fn render_graph(
         graph_resource.read_graph(|graph| graph.graph.node_indices().collect::<Vec<NodeIndex>>());
 
     // println!("node_indices: {:?}", node_indices.len());
+
+    let edge_indices =
+        graph_resource.read_graph(|graph| graph.graph.edge_indices().collect::<Vec<EdgeIndex>>());
+
+    for edge_index in edge_indices {
+        ui.add(EdgeWidget {
+            edge_index,
+            graph_resource: graph_resource.clone(),
+            canvas_state_resource: canvas_state_resource.clone(),
+        });
+    }
 
     for node_index in node_indices {
         // println!("node: {}", node_index.index());
@@ -130,16 +190,5 @@ pub fn render_graph(
         );
         node_widget.add_observer(Arc::new(NodeRenderObserver::new(ui.ctx().clone())));
         ui.add(node_widget);
-    }
-
-    let edge_indices =
-        graph_resource.read_graph(|graph| graph.graph.edge_indices().collect::<Vec<EdgeIndex>>());
-
-    for edge_index in edge_indices {
-        ui.add(EdgeWidget {
-            edge_index,
-            graph_resource: graph_resource.clone(),
-            canvas_state_resource: canvas_state_resource.clone(),
-        });
     }
 }

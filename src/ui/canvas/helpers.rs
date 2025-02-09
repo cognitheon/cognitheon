@@ -3,9 +3,12 @@ use petgraph::graph::NodeIndex;
 
 use crate::{
     canvas::CanvasState,
-    graph::render_info::NodeRenderInfo,
+    graph::{
+        anchor::{BezierAnchor, LineAnchor},
+        render_info::NodeRenderInfo,
+    },
     ui::{
-        bezier::{Anchor, BezierEdge},
+        bezier::BezierEdge,
         line_edge::LineEdge,
         temp_edge::{TempEdge, TempEdgeTarget},
     },
@@ -234,13 +237,14 @@ impl CanvasWidget {
             source: node_index,
             target: TempEdgeTarget::Point(mouse_canvas_pos),
             bezier_edge: BezierEdge::new(
-                Anchor::new_smooth(node_canvas_center),
-                Anchor::new_smooth(mouse_canvas_pos),
+                BezierAnchor::new_smooth(node_canvas_center),
+                BezierAnchor::new_smooth(mouse_canvas_pos),
             )
             .with_control_anchors(vec![]),
+
             line_edge: LineEdge {
-                source: Anchor::new_smooth(node_canvas_center),
-                target: Anchor::new_smooth(mouse_canvas_pos),
+                source: LineAnchor::new(node_canvas_center),
+                target: LineAnchor::new(mouse_canvas_pos),
             },
         })
     }

@@ -3,12 +3,13 @@ use std::sync::atomic::Ordering;
 use egui::{Id, PointerButton};
 
 use crate::{
-    graph::{edge::Edge, node::Node, render_info::NodeRenderInfo},
-    ui::{
-        bezier::{Anchor, BezierEdge},
-        line_edge::LineEdge,
-        temp_edge::TempEdgeTarget,
+    graph::{
+        anchor::{BezierAnchor, LineAnchor},
+        edge::Edge,
+        node::Node,
+        render_info::NodeRenderInfo,
     },
+    ui::{bezier::BezierEdge, line_edge::LineEdge, temp_edge::TempEdgeTarget},
 };
 
 use super::data::CanvasWidget;
@@ -23,19 +24,10 @@ impl CanvasWidget {
 
     pub fn post_render_actions(&mut self, ui: &mut egui::Ui, canvas_response: &egui::Response) {
         self.handle_drag_select(ui, canvas_response);
+        self.handle_escape(ui, canvas_response);
 
         // 处理双击
         if canvas_response.hovered() {
-            if ui.input(|i: &egui::InputState| {
-                i.key_pressed(egui::Key::Escape)
-                    || i.pointer.button_clicked(egui::PointerButton::Primary)
-            }) {
-                self.graph_resource.with_graph(|graph| {
-                    graph.selected_nodes.clear();
-                    graph.set_editing_node(None);
-                });
-            }
-
             if ui.input(|i| {
                 i.pointer
                     .button_double_clicked(egui::PointerButton::Primary)
@@ -53,7 +45,7 @@ impl CanvasWidget {
                                 position: canvas_pos,
                                 text: String::new(),
                                 note: String::new(),
-                                render_info: None,
+                                // render_info: None,
                             }
                         });
 
@@ -109,13 +101,14 @@ impl CanvasWidget {
 
                         temp_edge.target = TempEdgeTarget::Point(mouse_canvas_pos);
                         temp_edge.bezier_edge = BezierEdge::new(
-                            Anchor::new_smooth(source_canvas_center),
-                            Anchor::new_smooth(mouse_canvas_pos),
+                            BezierAnchor::new_smooth(source_canvas_center),
+                            BezierAnchor::new_smooth(mouse_canvas_pos),
                         )
                         .with_control_anchors(control_anchors);
+
                         temp_edge.line_edge = LineEdge {
-                            source: Anchor::new_smooth(source_canvas_center),
-                            target: Anchor::new_smooth(mouse_canvas_pos),
+                            source: LineAnchor::new(source_canvas_center),
+                            target: LineAnchor::new(mouse_canvas_pos),
                         };
                     }
                 }
@@ -167,6 +160,28 @@ impl CanvasWidget {
                 } else {
                     // Released on empty space, create a node or do nothing
                     println!("Released on empty space. Maybe create a new node?");
+                    let source_node_index = self.temp_edge.as_ref().unwrap().source;
+                    let mouse_canvas_pos = self
+                        .canvas_state_resource
+                        .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
+                    let node = Node {
+                        id: self
+                            .canvas_state_resource
+                            .read_canvas_state(|canvas_state| {
+                                canvas_state.global_node_id.fetch_add(1, Ordering::Relaxed)
+                            }),
+                        position: mouse_canvas_pos,
+                        text: String::new(),
+                        note: String::new(),
+                    };
+
+                    self.graph_resource.with_graph(|graph| {
+                        graph.add_node_with_edge(
+                            node,
+                            source_node_index,
+                            self.canvas_state_resource.clone(),
+                        );
+                    });
                 }
             }
 

@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use egui::{Align, ComboBox, Id, Layout, RichText};
+use rfd::AsyncFileDialog;
+use tokio::runtime::{Builder, Runtime};
 
 use crate::globals::{
     canvas_state_resource::CanvasStateResource, graph_resource::GraphResource,
@@ -27,6 +29,8 @@ pub struct TemplateApp {
     canvas_widget: CanvasWidget,
     #[serde(skip)]
     particle_system: Option<ParticleSystemResource>,
+    #[serde(skip)]
+    runtime: Runtime,
 }
 
 // impl Debug for TemplateApp {
@@ -49,6 +53,11 @@ impl Default for TemplateApp {
             graph_resource: graph_resource.clone(),
             canvas_widget: CanvasWidget::new(graph_resource.clone(), canvas_resource.clone()),
             particle_system: None,
+            runtime: Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .unwrap(),
         }
     }
 }
@@ -66,18 +75,18 @@ impl TemplateApp {
         // }
         setup_font(&cc.egui_ctx);
 
-        // let mut app = if let Some(storage) = cc.storage {
-        //     println!("load");
-        //     let mut app: TemplateApp =
-        //         eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
-        //     app.canvas_widget =
-        //         CanvasWidget::new(app.graph_resource.clone(), app.canvas_resource.clone());
-        //     println!("app: {:?}", app);
-        //     app
-        // } else {
-        //     Default::default()
-        // };
-        let mut app: TemplateApp = Default::default();
+        let mut app = if let Some(storage) = cc.storage {
+            println!("load");
+            let mut app: TemplateApp =
+                eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+            app.canvas_widget =
+                CanvasWidget::new(app.graph_resource.clone(), app.canvas_resource.clone());
+            // println!("app: {:?}", app);
+            app
+        } else {
+            Default::default()
+        };
+        // let mut app: TemplateApp = Default::default();
 
         let wgpu_render_state = cc.wgpu_render_state.as_ref();
         if let Some(rs) = wgpu_render_state {
@@ -121,7 +130,7 @@ impl TemplateApp {
 impl eframe::App for TemplateApp {
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        println!("save");
+        // println!("save");
         // println!("self: {:?}", self);
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
@@ -136,7 +145,7 @@ impl eframe::App for TemplateApp {
             };
 
         let delta_time = ctx.input(|i| i.stable_dt).min(0.1); // 稳定的一帧时间
-        let speed = 40.0; // 像素/秒
+        let speed = 20.0; // 像素/秒
 
         // 每帧更新 offset
         let new_offset = last_offset - speed * delta_time;
@@ -169,10 +178,66 @@ impl eframe::App for TemplateApp {
                 let is_web = cfg!(target_arch = "wasm32");
                 if !is_web {
                     ui.menu_button("File", |ui| {
+                        if ui.button("New").clicked() {
+                            println!("new");
+                            self.graph_resource.with_graph(|graph| graph.reset());
+                        }
+
+                        if ui.button("Save").clicked() {
+                            ui.close_menu();
+                            println!("save");
+                            let future = async {
+                                let file = AsyncFileDialog::new()
+                                    .add_filter("Cognitheon", &["cnt"])
+                                    .set_directory("~")
+                                    .save_file()
+                                    .await;
+
+                                let data = serde_json::to_string(&self).unwrap();
+                                let file = file.unwrap();
+                                match file.write(data.as_bytes()).await {
+                                    Ok(_) => println!("save success"),
+                                    Err(e) => println!("save failed: {}", e),
+                                }
+                            };
+                            self.runtime.block_on(future);
+                        }
+
+                        if ui.button("Load").clicked() {
+                            println!("load file");
+                            ui.close_menu();
+                            let future = async {
+                                let file = AsyncFileDialog::new()
+                                    .add_filter("Cognitheon", &["cnt"])
+                                    .set_directory("~")
+                                    .pick_file()
+                                    .await;
+
+                                let file = file.unwrap();
+                                let data = file.read().await;
+
+                                data
+                            };
+                            let data = self.runtime.block_on(future);
+                            match serde_json::from_slice::<TemplateApp>(&data) {
+                                Ok(app) => {
+                                    self.graph_resource = app.graph_resource;
+                                    self.canvas_resource = app.canvas_resource;
+
+                                    self.canvas_widget = CanvasWidget::new(
+                                        self.graph_resource.clone(),
+                                        self.canvas_resource.clone(),
+                                    );
+                                }
+                                Err(e) => println!("load failed: {}", e),
+                            }
+                        }
+
                         if ui.button("Quit").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                     });
+
                     ui.add_space(16.0);
                 }
 

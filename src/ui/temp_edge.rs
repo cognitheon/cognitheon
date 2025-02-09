@@ -8,7 +8,7 @@ use crate::{
 };
 
 use super::{
-    bezier::{Anchor, BezierEdge, BezierWidget},
+    bezier::{BezierEdge, BezierWidget},
     line_edge::LineEdge,
 };
 
@@ -33,21 +33,21 @@ pub struct TempEdgeWidget<'a> {
     pub canvas_state_resource: CanvasStateResource,
 }
 
-impl<'a> TempEdgeWidget<'a> {
-    pub fn get_target_anchor(&self, ui: &mut egui::Ui) -> Anchor {
-        match self.temp_edge.target {
-            TempEdgeTarget::Node(node_index) => {
-                let node_id = node_index.index().to_string();
-                let node_render_info: NodeRenderInfo =
-                    ui.ctx().data(|d| d.get_temp(Id::new(node_id))).unwrap();
+// impl<'a> TempEdgeWidget<'a> {
+//     pub fn get_target_anchor(&self, ui: &mut egui::Ui) -> Anchor {
+//         match self.temp_edge.target {
+//             TempEdgeTarget::Node(node_index) => {
+//                 let node_id = node_index.index().to_string();
+//                 let node_render_info: NodeRenderInfo =
+//                     ui.ctx().data(|d| d.get_temp(Id::new(node_id))).unwrap();
 
-                Anchor::new_smooth(node_render_info.canvas_center())
-            }
-            TempEdgeTarget::Point(point) => Anchor::new_smooth(point),
-            TempEdgeTarget::None => Anchor::new_smooth(Pos2::ZERO),
-        }
-    }
-}
+//                 Anchor::new_smooth(node_render_info.canvas_center())
+//             }
+//             TempEdgeTarget::Point(point) => Anchor::new_smooth(point),
+//             TempEdgeTarget::None => Anchor::new_smooth(Pos2::ZERO),
+//         }
+//     }
+// }
 
 impl<'a> Widget for TempEdgeWidget<'a> {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {

@@ -1,87 +1,85 @@
 use egui::*;
 
-use crate::globals::canvas_state_resource::CanvasStateResource;
+use crate::{globals::canvas_state_resource::CanvasStateResource, graph::anchor::BezierAnchor};
 
 use super::helpers::draw_dashed_rect_with_offset;
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct Anchor {
-    pub canvas_pos: egui::Pos2,            // 锚点坐标
-    pub handle_in_canvas_pos: egui::Pos2,  // 进入方向控制柄
-    pub handle_out_canvas_pos: egui::Pos2, // 退出方向控制柄
-    pub is_smooth: bool,                   // 是否平滑锚点（控制柄对称）
-    pub selected: bool,                    // 是否被选中
-}
+// #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+// pub struct Anchor {
+//     pub canvas_pos: egui::Pos2,            // 锚点坐标
+//     pub handle_in_canvas_pos: egui::Pos2,  // 进入方向控制柄
+//     pub handle_out_canvas_pos: egui::Pos2, // 退出方向控制柄
+//     pub is_smooth: bool,                   // 是否平滑锚点（控制柄对称）
+//     pub selected: bool,                    // 是否被选中
+// }
 
-impl Anchor {
-    // 创建平滑锚点（自动生成对称控制柄）
-    pub fn new_smooth(canvas_pos: egui::Pos2) -> Self {
-        let handle_offset = Vec2::new(30.0, 0.0); // 默认水平对称
-        Self {
-            canvas_pos,
-            handle_in_canvas_pos: canvas_pos - handle_offset,
-            handle_out_canvas_pos: canvas_pos + handle_offset,
-            is_smooth: true,
-            selected: false,
-        }
-    }
+// impl Anchor {
+//     // 创建平滑锚点（自动生成对称控制柄）
+//     pub fn new_smooth(canvas_pos: egui::Pos2) -> Self {
+//         let handle_offset = Vec2::new(30.0, 0.0); // 默认水平对称
+//         Self {
+//             canvas_pos,
+//             handle_in_canvas_pos: canvas_pos - handle_offset,
+//             handle_out_canvas_pos: canvas_pos + handle_offset,
+//             is_smooth: true,
+//             selected: false,
+//         }
+//     }
 
-    // 创建尖锐锚点（控制柄各自独立）
-    pub fn new_sharp(canvas_pos: egui::Pos2) -> Self {
-        let handle_offset_in = Vec2::new(-30.0, 0.0); // 默认水平
-        let handle_offset_out = Vec2::new(30.0, 0.0); // 默认水平
-        Self {
-            canvas_pos,
-            handle_in_canvas_pos: canvas_pos + handle_offset_in,
-            handle_out_canvas_pos: canvas_pos + handle_offset_out,
-            is_smooth: false,
-            selected: false,
-        }
-    }
+//     // 创建尖锐锚点（控制柄各自独立）
+//     pub fn new_sharp(canvas_pos: egui::Pos2) -> Self {
+//         let handle_offset_in = Vec2::new(-30.0, 0.0); // 默认水平
+//         let handle_offset_out = Vec2::new(30.0, 0.0); // 默认水平
+//         Self {
+//             canvas_pos,
+//             handle_in_canvas_pos: canvas_pos + handle_offset_in,
+//             handle_out_canvas_pos: canvas_pos + handle_offset_out,
+//             is_smooth: false,
+//             selected: false,
+//         }
+//     }
 
-    pub fn with_handles(mut self, handle_in: egui::Pos2, handle_out: egui::Pos2) -> Self {
-        self.handle_in_canvas_pos = handle_in;
-        self.handle_out_canvas_pos = handle_out;
-        self
-    }
+//     pub fn with_handles(mut self, handle_in: egui::Pos2, handle_out: egui::Pos2) -> Self {
+//         self.handle_in_canvas_pos = handle_in;
+//         self.handle_out_canvas_pos = handle_out;
+//         self
+//     }
 
-    // 强制设为平滑锚点，并更新控制柄为对称状态
-    pub fn set_smooth(&mut self) {
-        self.is_smooth = true;
-        self.enforce_smooth();
-    }
+//     // 强制设为平滑锚点，并更新控制柄为对称状态
+//     pub fn set_smooth(&mut self) {
+//         self.is_smooth = true;
+//         self.enforce_smooth();
+//     }
 
-    // 强制设为尖锐锚点
-    pub fn set_sharp(&mut self) {
-        self.is_smooth = false;
-    }
+//     // 强制设为尖锐锚点
+//     pub fn set_sharp(&mut self) {
+//         self.is_smooth = false;
+//     }
 
-    // 强制更新控制柄为对称状态，保持平滑
-    pub fn enforce_smooth(&mut self) {
-        let in_vec = self.canvas_pos - self.handle_in_canvas_pos;
-        self.handle_out_canvas_pos = self.canvas_pos + in_vec;
-    }
-}
+//     // 强制更新控制柄为对称状态，保持平滑
+//     pub fn enforce_smooth(&mut self) {
+//         let in_vec = self.canvas_pos - self.handle_in_canvas_pos;
+//         self.handle_out_canvas_pos = self.canvas_pos + in_vec;
+//     }
+// }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct BezierEdge {
-    pub source_anchor: Anchor,
-    pub target_anchor: Anchor,
-    pub control_anchors: Vec<Anchor>, // 控制锚点，可以有多个
-    pub selected: bool,
+    pub source_anchor: BezierAnchor,
+    pub target_anchor: BezierAnchor,
+    pub control_anchors: Vec<BezierAnchor>, // 控制锚点，可以有多个
 }
 
 impl BezierEdge {
-    pub fn new(source_anchor: Anchor, target_anchor: Anchor) -> Self {
+    pub fn new(source_anchor: BezierAnchor, target_anchor: BezierAnchor) -> Self {
         Self {
             source_anchor,
             target_anchor,
             control_anchors: Vec::new(),
-            selected: false,
         }
     }
 
-    pub fn with_control_anchors(mut self, control_anchors: Vec<Anchor>) -> Self {
+    pub fn with_control_anchors(mut self, control_anchors: Vec<BezierAnchor>) -> Self {
         self.control_anchors = control_anchors;
         self
     }
@@ -290,7 +288,7 @@ impl BezierWidget {
         if response.hovered() {
             // println!("response.hovered()");
             let drag_type = self.hit_test(mouse_canvas_pos);
-            println!("drag_type: {:?}", drag_type);
+            // println!("drag_type: {:?}", drag_type);
             match drag_type {
                 DragType::Anchor
                 | DragType::HandleIn
@@ -306,7 +304,6 @@ impl BezierWidget {
             }
 
             if response.double_clicked() {
-                self.edge.selected = !self.edge.selected; // 双击选中/取消选中
                 ui.ctx().request_repaint();
             }
             if response.drag_started() && drag_type != DragType::None {
@@ -343,7 +340,7 @@ impl BezierWidget {
         let full_anchors = std::iter::once(&mut self.edge.source_anchor)
             .chain(self.edge.control_anchors.iter_mut())
             .chain(std::iter::once(&mut self.edge.target_anchor));
-        let mut all_anchors: Vec<&mut Anchor> = full_anchors.collect();
+        let mut all_anchors: Vec<&mut BezierAnchor> = full_anchors.collect();
 
         let anchor = &mut all_anchors[index];
 
@@ -366,7 +363,7 @@ impl BezierWidget {
         let full_anchors = std::iter::once(&mut self.edge.source_anchor)
             .chain(self.edge.control_anchors.iter_mut())
             .chain(std::iter::once(&mut self.edge.target_anchor));
-        let mut all_anchors: Vec<&mut Anchor> = full_anchors.collect();
+        let mut all_anchors: Vec<&mut BezierAnchor> = full_anchors.collect();
         let anchor = &mut all_anchors[index];
 
         let delta = ui.input(|i| i.pointer.delta())
@@ -387,7 +384,7 @@ impl BezierWidget {
         let full_anchors = std::iter::once(&mut self.edge.source_anchor)
             .chain(self.edge.control_anchors.iter_mut())
             .chain(std::iter::once(&mut self.edge.target_anchor));
-        let mut all_anchors: Vec<&mut Anchor> = full_anchors.collect();
+        let mut all_anchors: Vec<&mut BezierAnchor> = full_anchors.collect();
         let anchor = &mut all_anchors[index];
 
         let delta = ui.input(|i| i.pointer.delta())
@@ -421,11 +418,12 @@ impl BezierWidget {
                     .canvas_state_resource
                     .read_canvas_state(|canvas_state| canvas_state.transform.scaling);
 
-            let color = if anchor.selected {
-                egui::Color32::GOLD
-            } else {
-                egui::Color32::from_rgba_premultiplied(150, 150, 10, 200)
-            };
+            // let color = if anchor.selected {
+            //     egui::Color32::GOLD
+            // } else {
+            //     egui::Color32::from_rgba_premultiplied(150, 150, 10, 200)
+            // };
+            let color = egui::Color32::GOLD;
             let circle_screen_pos = self
                 .canvas_state_resource
                 .read_canvas_state(|canvas_state| canvas_state.to_screen(anchor.canvas_pos));
@@ -629,6 +627,7 @@ impl BezierWidget {
 
 impl Widget for &mut BezierWidget {
     fn ui(self, ui: &mut Ui) -> Response {
+        // println!("BezierWidget::ui: selected: {:?}", self.edge.selected);
         // let canvas_state_resource: CanvasStateResource =
         //     ui.ctx().data(|d| d.get_temp(Id::NULL)).unwrap();
 

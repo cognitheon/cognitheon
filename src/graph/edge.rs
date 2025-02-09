@@ -4,11 +4,10 @@ use petgraph::graph::NodeIndex;
 
 use crate::{
     globals::canvas_state_resource::CanvasStateResource,
-    ui::{
-        bezier::{Anchor, BezierEdge},
-        line_edge::LineEdge,
-    },
+    ui::{bezier::BezierEdge, line_edge::LineEdge},
 };
+
+use super::anchor::{BezierAnchor, LineAnchor};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Edge {
@@ -36,12 +35,13 @@ impl Edge {
             target,
             text: None,
             bezier_edge: BezierEdge::new(
-                Anchor::new_smooth(source_canvas_pos),
-                Anchor::new_smooth(target_canvas_pos),
+                BezierAnchor::new_smooth(source_canvas_pos),
+                BezierAnchor::new_smooth(target_canvas_pos),
             ),
+
             line_edge: LineEdge::new(
-                Anchor::new_smooth(source_canvas_pos),
-                Anchor::new_smooth(target_canvas_pos),
+                LineAnchor::new(source_canvas_pos),
+                LineAnchor::new(target_canvas_pos),
             ),
         }
     }

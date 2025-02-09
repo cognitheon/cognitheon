@@ -5,6 +5,7 @@ use crate::{
     geometry::{edge_offset_direction, intersect_rect_with_pos, IntersectDirection},
     globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource},
     graph::{
+        anchor::{BezierAnchor, LineAnchor},
         edge::EdgeType,
         helpers::{get_node_render_info, node_rect_center},
         render_info::NodeRenderInfo,
@@ -12,7 +13,7 @@ use crate::{
 };
 
 use super::{
-    bezier::{Anchor, BezierEdge, BezierWidget},
+    bezier::{BezierEdge, BezierWidget},
     line_edge::{LineEdge, LineWidget},
 };
 
@@ -97,11 +98,11 @@ impl EdgeWidget {
             IntersectDirection::Bottom => Vec2::new(0.0, 30.0),
         };
 
-        let source_anchor = Anchor::new_smooth(source_canvas_pos).with_handles(
+        let source_anchor = BezierAnchor::new_smooth(source_canvas_pos).with_handles(
             source_canvas_pos + handle_offset_source,
             source_canvas_pos + handle_offset_source,
         );
-        let target_anchor = Anchor::new_smooth(target_canvas_pos).with_handles(
+        let target_anchor = BezierAnchor::new_smooth(target_canvas_pos).with_handles(
             target_canvas_pos + handle_offset_target,
             target_canvas_pos + handle_offset_target,
         );
@@ -176,9 +177,10 @@ impl EdgeWidget {
         };
 
         let new_line_edge = LineEdge::new(
-            Anchor::new_smooth(source_canvas_pos),
-            Anchor::new_smooth(target_canvas_pos),
+            LineAnchor::new(source_canvas_pos),
+            LineAnchor::new(target_canvas_pos),
         );
+
         self.graph_resource.with_graph(|graph| {
             graph.update_line_edge(self.edge_index, new_line_edge);
         });

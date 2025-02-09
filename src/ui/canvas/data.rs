@@ -1,4 +1,4 @@
-use egui::{Pos2, Rect};
+use egui::Pos2;
 use petgraph::graph::NodeIndex;
 
 use crate::{
@@ -65,10 +65,10 @@ impl CanvasWidget {
                     .collect::<Vec<NodeIndex>>()
             });
 
-            println!("node_indices: {:?}", node_indices);
+            // println!("node_indices: {:?}", node_indices);
             self.graph_resource.with_graph(|graph| {
-                graph.selected_nodes.clear();
-                graph.selected_nodes.extend(node_indices);
+                graph.selected.clear();
+                graph.select_nodes(node_indices);
             });
         }
     }

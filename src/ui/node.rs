@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource};
 use crate::graph::node_observer::NodeObserver;
 use crate::graph::render_info::NodeRenderInfo;
+use crate::graph::selection::GraphSelection;
 use egui::{Id, Sense, Stroke, Widget};
 use petgraph::graph::NodeIndex;
 
@@ -66,7 +67,7 @@ impl NodeWidget {
                 if graph.get_editing_node() != Some(self.node_index) {
                     graph.set_editing_node(None);
                 }
-                graph.selected_nodes.clear();
+                graph.selected.clear();
                 graph.select_node(self.node_index);
             });
         }
@@ -74,16 +75,18 @@ impl NodeWidget {
         // 处理键盘按键
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.graph_resource.with_graph(|graph| {
-                graph.selected_nodes.clear();
+                graph.selected.clear();
                 graph.set_editing_node(None);
             });
         }
 
         if ui.input(|i| i.key_pressed(egui::Key::Backspace) || i.key_pressed(egui::Key::Delete)) {
             self.graph_resource.with_graph(|graph| {
-                if graph.selected_nodes.contains(&self.node_index) && graph.editing_node.is_none() {
-                    println!("node deleted: {:?}", self.node_index);
-                    graph.remove_node(self.node_index);
+                if let GraphSelection::Node(selected_nodes) = &graph.selected {
+                    if selected_nodes.contains(&self.node_index) && graph.editing_node.is_none() {
+                        println!("node deleted: {:?}", self.node_index);
+                        graph.remove_node(self.node_index);
+                    }
                 }
             });
         }
@@ -339,10 +342,13 @@ impl Widget for NodeWidget {
             // let stroke_width = 3.0 * canvas_state.scale;
             let stroke_width = 1.0;
 
-            if self
-                .graph_resource
-                .read_graph(|graph| graph.selected_nodes.contains(&self.node_index))
-            {
+            if self.graph_resource.read_graph(|graph| {
+                if let GraphSelection::Node(selected_nodes) = &graph.selected {
+                    selected_nodes.contains(&self.node_index)
+                } else {
+                    false
+                }
+            }) {
                 painter.rect(
                     selected_rect,
                     egui::Rounding::same(5.0),

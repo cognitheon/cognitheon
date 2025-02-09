@@ -1,17 +1,15 @@
 use egui::*;
 
-use crate::globals::canvas_state_resource::CanvasStateResource;
-
-use super::bezier::Anchor;
+use crate::{globals::canvas_state_resource::CanvasStateResource, graph::anchor::LineAnchor};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct LineEdge {
-    pub source: Anchor,
-    pub target: Anchor,
+    pub source: LineAnchor,
+    pub target: LineAnchor,
 }
 
 impl LineEdge {
-    pub fn new(source: Anchor, target: Anchor) -> Self {
+    pub fn new(source: LineAnchor, target: LineAnchor) -> Self {
         Self { source, target }
     }
 }
