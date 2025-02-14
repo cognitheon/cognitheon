@@ -84,18 +84,20 @@ impl EdgeWidget {
             return;
         };
 
+        let offset_amount = 50.0;
+
         let handle_offset_source = match source_dir {
-            IntersectDirection::Left => Vec2::new(-30.0, 0.0),
-            IntersectDirection::Right => Vec2::new(30.0, 0.0),
-            IntersectDirection::Top => Vec2::new(0.0, -30.0),
-            IntersectDirection::Bottom => Vec2::new(0.0, 30.0),
+            IntersectDirection::Left => Vec2::new(-offset_amount, 0.0),
+            IntersectDirection::Right => Vec2::new(offset_amount, 0.0),
+            IntersectDirection::Top => Vec2::new(0.0, -offset_amount),
+            IntersectDirection::Bottom => Vec2::new(0.0, offset_amount),
         };
         // println!("target_dir: {:?}", target_dir);
         let handle_offset_target = match target_dir {
-            IntersectDirection::Left => Vec2::new(-30.0, 0.0),
-            IntersectDirection::Right => Vec2::new(30.0, 0.0),
-            IntersectDirection::Top => Vec2::new(0.0, -30.0),
-            IntersectDirection::Bottom => Vec2::new(0.0, 30.0),
+            IntersectDirection::Left => Vec2::new(-offset_amount, 0.0),
+            IntersectDirection::Right => Vec2::new(offset_amount, 0.0),
+            IntersectDirection::Top => Vec2::new(0.0, -offset_amount),
+            IntersectDirection::Bottom => Vec2::new(0.0, offset_amount),
         };
 
         let source_anchor = BezierAnchor::new_smooth(source_canvas_pos).with_handles(
