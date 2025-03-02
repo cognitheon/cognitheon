@@ -62,6 +62,23 @@ impl InputStateManager {
             }
         }
 
+        if response.hovered()
+            && ui.input(|i| {
+                i.pointer.button_down(egui::PointerButton::Primary)
+                    && !i.key_down(egui::Key::Space)
+                    && i.modifiers.is_none()
+            })
+        {
+            if let Some(cursor_pos) = ui.input(|i| i.pointer.hover_pos()) {
+                let start_pos = cursor_pos;
+                self.transition_to(InputState::Selecting {
+                    start_pos,
+                    current_pos: start_pos,
+                });
+                return;
+            }
+        }
+
         // 例如：检测点击节点并开始拖动
         if ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary)) {
             if let Some(cursor_pos) = ui.input(|i| i.pointer.hover_pos()) {
@@ -82,8 +99,6 @@ impl InputStateManager {
                 return;
             }
         }
-
-        // 其他可能的状态转换...
     }
 
     fn handle_panning_state(&mut self, ui: &mut egui::Ui, last_cursor_pos: Pos2) {
@@ -156,8 +171,4 @@ pub fn calc_input(ui: &mut egui::Ui) -> InputState {
     }
 
     input_state
-}
-
-pub fn hit_test_nodes(ui: &mut egui::Ui) -> Option<NodeIndex> {
-    None
 }
