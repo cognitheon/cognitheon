@@ -4,18 +4,35 @@ use petgraph::graph::{EdgeIndex, NodeIndex};
 #[derive(Debug, Clone)]
 pub enum InputState {
     Idle,
-    /// a
-    Dragging(DragType),
-    /// Selecting
-    Selecting(SelectType),
-    /// Cutting
-    Cutting([Pos2; 2]),
-    /// Click to create a node
-    ClickCreateNode(Pos2),
-    /// Drag to create a node
-    DragCreateNode([Pos2; 2]),
-    /// Drag to create an edge
-    DragCreateEdge([Pos2; 2]),
+    /// Panning
+    Panning {
+        last_cursor_pos: Pos2,
+    },
+    DraggingNode {
+        node_index: NodeIndex,
+        start_pos: Pos2,
+    },
+    EditingNode {
+        node_index: NodeIndex,
+    },
+    CreatingEdge {
+        source_node: NodeIndex,
+        current_cursor_pos: Pos2,
+    },
+    Selecting {
+        start_pos: Pos2,
+        current_pos: Pos2,
+    },
+    // /// Selecting
+    // Selecting(SelectType),
+    // /// Cutting
+    // Cutting([Pos2; 2]),
+    // /// Click to create a node
+    // ClickCreateNode(Pos2),
+    // /// Drag to create a node
+    // DragCreateNode([Pos2; 2]),
+    // /// Drag to create an edge
+    // DragCreateEdge([Pos2; 2]),
 }
 
 impl Default for InputState {
