@@ -218,8 +218,9 @@ impl InputStateManager {
     fn handle_continuous_events(&mut self, ui: &mut egui::Ui, target: &InputTarget) {
         // 处理鼠标移动
         if self.current_state.handles_mouse_motion() {
-            let delta = ui.input(|i| i.pointer.delta());
+            let delta = ui.input(|i: &egui::InputState| i.pointer.delta());
             if delta != Vec2::ZERO {
+                println!("delta: {:?}", delta);
                 self.handle_mouse_motion(ui, delta, target);
             }
         }

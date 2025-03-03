@@ -106,30 +106,30 @@ impl NodeWidget {
         }
 
         // 处理拖动事件
-        if response.dragged_by(egui::PointerButton::Primary)
-            && self
-                .graph_resource
-                .read_graph(|graph| graph.get_editing_node())
-                != Some(self.node_index)
-        {
-            self.graph_resource.with_graph(|graph| {
-                graph.set_editing_node(None);
-            });
-            println!("node dragged: {:?}", self.node_index);
-            let drag_delta = response.drag_delta()
-                / (self
-                    .canvas_state_resource
-                    .read_canvas_state(|canvas_state| canvas_state.transform.scaling));
-            self.graph_resource.with_graph(|graph| {
-                let node = graph.get_node_mut(self.node_index).unwrap();
-                node.position += drag_delta;
-                // let canvas_rect = self
-                //     .canvas_state_resource
-                //     .read_canvas_state(|canvas_state| canvas_state.to_canvas_rect(response.rect));
-                // let render_info = NodeRenderInfo { canvas_rect };
-                // node.render_info = Some(render_info);
-            });
-        }
+        // if response.dragged_by(egui::PointerButton::Primary)
+        //     && self
+        //         .graph_resource
+        //         .read_graph(|graph| graph.get_editing_node())
+        //         != Some(self.node_index)
+        // {
+        //     self.graph_resource.with_graph(|graph| {
+        //         graph.set_editing_node(None);
+        //     });
+        //     // println!("node dragged: {:?}", self.node_index);
+        //     let drag_delta = response.drag_delta()
+        //         / (self
+        //             .canvas_state_resource
+        //             .read_canvas_state(|canvas_state| canvas_state.transform.scaling));
+        //     self.graph_resource.with_graph(|graph| {
+        //         let node = graph.get_node_mut(self.node_index).unwrap();
+        //         node.position += drag_delta;
+        //         // let canvas_rect = self
+        //         //     .canvas_state_resource
+        //         //     .read_canvas_state(|canvas_state| canvas_state.to_canvas_rect(response.rect));
+        //         // let render_info = NodeRenderInfo { canvas_rect };
+        //         // node.render_info = Some(render_info);
+        //     });
+        // }
     }
 
     // fn handle_secondary_drag(&mut self, ui: &mut egui::Ui, response: &egui::Response) {

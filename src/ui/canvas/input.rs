@@ -16,7 +16,7 @@ use super::data::CanvasWidget;
 
 impl CanvasWidget {
     pub fn pre_render_actions(&mut self, ui: &mut egui::Ui) {
-        make_input_idle(ui);
+        // make_input_idle(ui);
 
         // self.handle_scale(ui);
         // self.handle_pan(ui);
