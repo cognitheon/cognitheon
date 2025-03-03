@@ -70,4 +70,12 @@ impl CanvasState {
         let screen_pos = self.transform.mul_pos(canvas_pos);
         egui::Vec2::new(screen_pos.x, screen_pos.y)
     }
+
+    pub fn to_canvas_vec2(&self, screen_pos: egui::Vec2) -> egui::Vec2 {
+        // canvas_pos * self.scale + self.offset
+        let screen_pos = egui::Pos2::new(screen_pos.x, screen_pos.y);
+
+        let canvas_pos = self.transform.inverse().mul_pos(screen_pos);
+        egui::Vec2::new(canvas_pos.x, canvas_pos.y)
+    }
 }

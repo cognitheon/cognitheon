@@ -428,7 +428,7 @@ impl InputStateManager {
 
     fn handle_mouse_motion(&mut self, ui: &mut egui::Ui, delta: Vec2, target: &InputTarget) {
         match &self.current_state {
-            InputState::Panning { last_cursor_pos } => {
+            InputState::Panning { last_cursor_pos: _ } => {
                 // 更新平移
                 self.context
                     .canvas_state_resource
@@ -443,7 +443,7 @@ impl InputStateManager {
             }
             InputState::DraggingNode {
                 node_index,
-                start_pos,
+                start_pos: _,
                 is_selection_drag,
                 selected_indices,
             } => {
@@ -676,18 +676,18 @@ impl InputStateManager {
         crate::ui::helpers::draw_dashed_rect_with_offset(
             painter,
             rect,
-            egui::Stroke::new(1.0, egui::Color32::BLUE),
-            4.0,
-            4.0,
+            egui::Stroke::new(1.0, egui::Color32::ORANGE),
+            10.0,
+            5.0,
             offset,
         );
 
-        // 绘制半透明填充
-        painter.rect_filled(
-            rect,
-            0.0,
-            egui::Color32::from_rgba_premultiplied(100, 100, 255, 40),
-        );
+        // // 绘制半透明填充
+        // painter.rect_filled(
+        //     rect,
+        //     0.0,
+        //     egui::Color32::from_rgba_premultiplied(100, 100, 255, 40),
+        // );
     }
 
     fn draw_temp_edge(&self, ui: &mut egui::Ui, source_node: NodeIndex, target_pos: Pos2) {
