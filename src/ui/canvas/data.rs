@@ -3,16 +3,18 @@ use petgraph::graph::NodeIndex;
 
 use crate::{
     globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource},
-    input::input_state::InputState,
+    input::{input_state::InputState, state_manager::InputStateManager},
     ui::temp_edge::TempEdge,
 };
 
 #[derive(Debug)]
 pub struct CanvasWidget {
+    pub input_manager: InputStateManager,
+    pub input_state: InputState,
     pub temp_edge: Option<TempEdge>,
     pub graph_resource: GraphResource,
     pub canvas_state_resource: CanvasStateResource,
-    pub input_state: InputState,
+    // pub input_state: InputState,
     pub input_busy: bool,
     pub drag_select_range: Option<[Pos2; 2]>,
 }
@@ -20,10 +22,14 @@ pub struct CanvasWidget {
 impl CanvasWidget {
     pub fn new(graph_resource: GraphResource, canvas_state_resource: CanvasStateResource) -> Self {
         Self {
+            input_manager: InputStateManager::new(
+                graph_resource.clone(),
+                canvas_state_resource.clone(),
+            ),
+            input_state: InputState::Idle,
             temp_edge: None,
             graph_resource,
             canvas_state_resource,
-            input_state: InputState::default(),
             input_busy: false,
             drag_select_range: None,
         }

@@ -6,7 +6,7 @@ use super::{data::CanvasWidget, helpers::draw_grid};
 
 impl Widget for &mut CanvasWidget {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        self.pre_render_actions(ui);
+        // self.pre_render_actions(ui);
         let desired_size = ui.available_size();
         let (screen_rect, canvas_response) =
             ui.allocate_exact_size(desired_size, egui::Sense::drag());
@@ -17,6 +17,8 @@ impl Widget for &mut CanvasWidget {
             .read_canvas_state(|canvas_state| {
                 draw_grid(ui, canvas_state, screen_rect);
             });
+
+        self.input_manager.update(ui, &canvas_response);
 
         if let Some(edge) = self.temp_edge.as_ref() {
             // println!("temp_edge target: {:?}", edge.target);
@@ -51,7 +53,7 @@ impl Widget for &mut CanvasWidget {
 
         self.update_selected_nodes();
 
-        self.post_render_actions(ui, &canvas_response);
+        // self.post_render_actions(ui, &canvas_response);
 
         canvas_response
     }

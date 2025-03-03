@@ -9,11 +9,11 @@ pub mod particle_system_resource;
 #[derive(Clone, Debug)]
 pub struct Resource<T>(pub Arc<RwLock<T>>)
 where
-    T: serde::Serialize + serde::de::DeserializeOwned + Default;
+    T: Default;
 
 impl<T> Default for Resource<T>
 where
-    T: serde::Serialize + serde::de::DeserializeOwned + Default,
+    T: Default,
 {
     fn default() -> Self {
         Self(Arc::new(RwLock::new(T::default())))
@@ -22,7 +22,7 @@ where
 
 impl<T> serde::Serialize for Resource<T>
 where
-    T: serde::Serialize + serde::de::DeserializeOwned + Default,
+    T: serde::Serialize + Default,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -34,7 +34,7 @@ where
 
 impl<'de, T> serde::Deserialize<'de> for Resource<T>
 where
-    T: serde::Serialize + serde::de::DeserializeOwned + Default,
+    T: serde::de::DeserializeOwned + Default,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -46,7 +46,7 @@ where
 
 impl<T> Resource<T>
 where
-    T: serde::Serialize + serde::de::DeserializeOwned + Default,
+    T: Default,
 {
     pub fn new(value: T) -> Self {
         Self(Arc::new(RwLock::new(value)))

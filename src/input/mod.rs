@@ -1,3 +1,5 @@
+pub mod button_state;
 pub mod detectors;
-pub mod input_manager;
+pub mod events;
 pub mod input_state;
+pub mod state_manager;

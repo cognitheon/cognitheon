@@ -75,6 +75,13 @@ impl Graph {
         }
     }
 
+    pub fn is_node_selected(&self, node_index: NodeIndex) -> bool {
+        match &self.selected {
+            GraphSelection::Node(nodes) => nodes.contains(&node_index),
+            _ => false,
+        }
+    }
+
     pub fn select_node(&mut self, node_index: NodeIndex) {
         match &mut self.selected {
             GraphSelection::Node(nodes) => nodes.push(node_index),
