@@ -160,9 +160,10 @@ pub fn draw_grid(ui: &mut egui::Ui, canvas_state: &CanvasState, screen_rect: egu
     let rect = canvas_state.to_screen_rect(rect);
     painter.rect(
         rect,
-        egui::Rounding::same(5.0),
+        egui::CornerRadius::same(5),
         egui::Color32::BLUE,
         egui::Stroke::new(2.0, egui::Color32::GREEN),
+        egui::StrokeKind::Outside,
     );
 
     // 画一个圆

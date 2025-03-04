@@ -9,7 +9,10 @@ pub enum InputState {
     Idle,
 
     /// 平移状态 - 用户正在平移画布
-    Panning { last_cursor_pos: Pos2 },
+    Panning {
+        last_cursor_pos: Pos2,
+        dragging: bool,
+    },
 
     /// 缩放状态 - 用户正在缩放画布
     Zooming { center: Pos2, start_scale: f32 },

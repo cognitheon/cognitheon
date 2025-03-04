@@ -330,9 +330,10 @@ impl Widget for NodeWidget {
             // 绘制包围矩形
             painter.rect(
                 rect,
-                0.0,
+                egui::CornerRadius::same(5),
                 egui::Color32::TRANSPARENT,
                 Stroke::new(1.0, egui::Color32::ORANGE),
+                egui::StrokeKind::Outside,
             );
 
             // let (response, painter) = ui.allocate_painter(desired_size, Sense::click_and_drag());
@@ -351,17 +352,19 @@ impl Widget for NodeWidget {
             }) {
                 painter.rect(
                     selected_rect,
-                    egui::Rounding::same(5.0),
+                    egui::CornerRadius::same(5),
                     egui::Color32::TRANSPARENT,
                     egui::Stroke::new(2.0, node_border_selected(ui.ctx().theme())), // 将线宽从20.0改为1.0
+                    egui::StrokeKind::Outside,
                 );
             }
             // 绘制边框
             painter.rect(
                 rect,
-                egui::Rounding::same(5.0),
+                egui::CornerRadius::same(5),
                 node_background(ui.ctx().theme()),
                 egui::Stroke::new(stroke_width, node_border(ui.ctx().theme())), // 将线宽从20.0改为1.0
+                egui::StrokeKind::Outside,
             );
 
             // 根据rect计算文本位置，使得文本居中
@@ -479,9 +482,10 @@ impl NodeWidget {
         let node_id_rect = egui::Rect::from_min_size(node_id_rect_start, desired_size);
         ui.painter().rect(
             node_id_rect,
-            egui::Rounding::ZERO,
+            egui::CornerRadius::ZERO,
             egui::Color32::from_rgba_premultiplied(0, 0, 240, 200),
             egui::Stroke::new(1.0, egui::Color32::RED),
+            egui::StrokeKind::Outside,
         );
         ui.painter().text(
             node_id_rect.center(),

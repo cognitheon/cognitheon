@@ -161,7 +161,7 @@ impl InputStateManager {
     }
 
     /// 每帧更新输入状态
-    pub fn update(&mut self, ui: &mut egui::Ui, response: &egui::Response) {
+    pub fn update(&mut self, ui: &mut egui::Ui, _response: &egui::Response) {
         // 更新上下文
         self.context.update(ui);
 
@@ -200,6 +200,13 @@ impl InputStateManager {
         }
 
         // 检查键盘按键
+        if ui.input(|i| i.key_pressed(Key::Space)) {
+            self.handle_space_key_press();
+        }
+        if ui.input(|i| i.key_released(Key::Space)) {
+            self.handle_space_key_release();
+        }
+
         if ui.input(|i| i.key_pressed(Key::Escape)) {
             self.handle_escape_key();
         }
@@ -232,7 +239,7 @@ impl InputStateManager {
         }
 
         // 处理缩放
-        let zoom_delta = ui.input(|i| i.zoom_delta());
+        let zoom_delta = ui.input(|i: &egui::InputState| i.zoom_delta());
         if zoom_delta != 1.0 {
             self.handle_zoom(zoom_delta);
         }
@@ -241,6 +248,18 @@ impl InputStateManager {
     /// 处理状态特定的更新逻辑
     fn handle_state_specific_updates(&mut self, ui: &mut egui::Ui) {
         match &self.current_state {
+            InputState::Idle => {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
+                self.context.graph_resource.with_graph(|graph| {
+                    graph.set_editing_node(None);
+                });
+            }
+            InputState::Panning {
+                last_cursor_pos: _,
+                dragging: _,
+            } => {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            }
             InputState::Selecting {
                 start_pos,
                 current_pos,
@@ -287,13 +306,14 @@ impl InputStateManager {
     // 下面是各种事件处理器...
 
     fn handle_primary_button_press(&mut self, ui: &mut egui::Ui, target: &InputTarget) {
-        // 目前只处理空闲状态下的点击
-        if !matches!(self.current_state, InputState::Idle) {
-            return;
-        }
-
         match target {
             InputTarget::Node(node_index) => {
+                if matches!(
+                    self.current_state,
+                    InputState::EditingNode { node_index: _ }
+                ) {
+                    return;
+                }
                 // 点击节点 - 开始拖动或选择
                 let shift_pressed = ui.input(|i| i.modifiers.shift);
 
@@ -338,21 +358,39 @@ impl InputStateManager {
                 }
             }
             InputTarget::Canvas => {
-                // 点击空白区域 - 开始框选
-                let shift_pressed = ui.input(|i| i.modifiers.shift);
+                // self.context.graph_resource.with_graph(|graph| {
+                //     graph.selected.clear();
+                // });
+                match &self.current_state {
+                    InputState::EditingNode { node_index: _ } => {
+                        self.transition_to(InputState::Idle);
+                    }
+                    _ => {
+                        // 点击空白区域 - 开始框选
+                        let shift_pressed = ui.input(|i: &egui::InputState| i.modifiers.shift);
+                        let space_pressed = ui.input(|i: &egui::InputState| i.key_down(Key::Space));
 
-                if !shift_pressed {
-                    // 清除现有选择
-                    self.context.graph_resource.with_graph(|graph| {
-                        graph.selected.clear();
-                    });
+                        if !shift_pressed {
+                            // 清除现有选择
+                            self.context.graph_resource.with_graph(|graph| {
+                                graph.selected.clear();
+                            });
+                        }
+
+                        if space_pressed {
+                            self.transition_to(InputState::Panning {
+                                last_cursor_pos: self.context.current_mouse_pos,
+                                dragging: true,
+                            });
+                        } else {
+                            self.transition_to(InputState::Selecting {
+                                start_pos: self.context.current_mouse_pos,
+                                current_pos: self.context.current_mouse_pos,
+                                add_to_selection: shift_pressed,
+                            });
+                        }
+                    }
                 }
-
-                self.transition_to(InputState::Selecting {
-                    start_pos: self.context.current_mouse_pos,
-                    current_pos: self.context.current_mouse_pos,
-                    add_to_selection: shift_pressed,
-                });
             }
             // 处理其他目标...
             _ => {}
@@ -380,6 +418,19 @@ impl InputStateManager {
 
     fn handle_primary_button_release(&mut self, ui: &mut egui::Ui, target: &InputTarget) {
         match &self.current_state {
+            InputState::Panning {
+                last_cursor_pos,
+                dragging,
+            } => {
+                if *dragging {
+                    self.transition_to(InputState::Panning {
+                        last_cursor_pos: *last_cursor_pos,
+                        dragging: false,
+                    });
+                } else {
+                    self.transition_to(InputState::Idle);
+                }
+            }
             InputState::DraggingNode { .. } => {
                 // 结束节点拖动
                 self.transition_to(InputState::Idle);
@@ -429,18 +480,24 @@ impl InputStateManager {
 
     fn handle_mouse_motion(&mut self, ui: &mut egui::Ui, delta: Vec2, target: &InputTarget) {
         match &self.current_state {
-            InputState::Panning { last_cursor_pos: _ } => {
-                // 更新平移
-                self.context
-                    .canvas_state_resource
-                    .with_canvas_state(|state| {
-                        state.transform.translation += delta;
-                    });
+            InputState::Panning {
+                last_cursor_pos: _,
+                dragging,
+            } => {
+                if *dragging {
+                    // 更新平移
+                    self.context
+                        .canvas_state_resource
+                        .with_canvas_state(|state| {
+                            state.transform.translation += delta;
+                        });
 
-                // 更新状态，保持平移
-                self.transition_to(InputState::Panning {
-                    last_cursor_pos: self.context.current_mouse_pos,
-                });
+                    // 更新状态，保持平移
+                    self.transition_to(InputState::Panning {
+                        last_cursor_pos: self.context.current_mouse_pos,
+                        dragging: true,
+                    });
+                }
             }
             InputState::DraggingNode {
                 node_index,
@@ -500,6 +557,26 @@ impl InputStateManager {
         }
     }
 
+    fn handle_space_key_press(&mut self) {
+        if matches!(self.current_state, InputState::Idle) {
+            self.transition_to(InputState::Panning {
+                last_cursor_pos: self.context.current_mouse_pos,
+                dragging: false,
+            });
+        }
+    }
+    fn handle_space_key_release(&mut self) {
+        if matches!(
+            self.current_state,
+            InputState::Panning {
+                last_cursor_pos: _,
+                dragging: _
+            }
+        ) {
+            self.transition_to(InputState::Idle);
+        }
+    }
+
     fn handle_escape_key(&mut self) {
         // 几乎任何状态下，按下Escape都应该回到空闲状态
         if !matches!(self.current_state, InputState::Idle) {
@@ -514,6 +591,12 @@ impl InputStateManager {
     }
 
     fn handle_delete_key(&mut self) {
+        if matches!(
+            self.current_state,
+            InputState::EditingNode { node_index: _ }
+        ) {
+            return;
+        }
         // 删除选中的节点
         self.context.graph_resource.with_graph(|graph| {
             let nodes_to_remove =
@@ -592,6 +675,10 @@ impl InputStateManager {
             self.context
                 .canvas_state_resource
                 .with_canvas_state(|state| {
+                    let scaling = state.transform.scaling;
+                    if scaling <= 0.1 && delta < 1.0 || scaling >= 100.0 && delta > 1.0 {
+                        return;
+                    }
                     let pointer_in_layer = state.transform.inverse() * mouse_pos;
 
                     // 缩放，保持鼠标下方的点不变
@@ -599,6 +686,9 @@ impl InputStateManager {
                         * egui::emath::TSTransform::from_translation(pointer_in_layer.to_vec2())
                         * egui::emath::TSTransform::from_scaling(delta)
                         * egui::emath::TSTransform::from_translation(-pointer_in_layer.to_vec2());
+
+                    // 最终scaling截断
+                    state.transform.scaling = state.transform.scaling.clamp(0.1, 100.0);
                 });
         }
     }

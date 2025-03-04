@@ -1,6 +1,6 @@
 use egui::{emath::TSTransform, Color32, Id, Pos2, Rect, Response, Stroke};
 
-use crate::ui::helpers::draw_dashed_rect_with_offset;
+use crate::{canvas::CanvasState, ui::helpers::draw_dashed_rect_with_offset};
 
 use super::{
     data::CanvasWidget,
@@ -48,7 +48,7 @@ impl CanvasWidget {
         if CanvasWidget::zooming(ui) {
             // 计算鼠标指针相对于画布原点的偏移
             self.canvas_state_resource
-                .with_canvas_state(|canvas_state| {
+                .with_canvas_state(|canvas_state: &mut CanvasState| {
                     let mouse_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
                     // let mouse_canvas_pos = (mouse_pos - canvas_state.offset) / canvas_state.scale;
                     // // 保存旧的缩放值
@@ -68,6 +68,14 @@ impl CanvasWidget {
                     let pointer_in_layer = canvas_state.transform.inverse() * mouse_pos;
                     let zoom_delta = ui.ctx().input(|i| i.zoom_delta());
                     let pan_delta = ui.ctx().input(|i| i.smooth_scroll_delta);
+
+                    // 缩放的最小值为0.1，最大值为100.0
+                    if canvas_state.transform.scaling < 0.1 {
+                        return;
+                    }
+                    if canvas_state.transform.scaling > 100.0 {
+                        return;
+                    }
 
                     // Zoom in on pointer:
                     canvas_state.transform = canvas_state.transform

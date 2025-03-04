@@ -11,6 +11,7 @@ use crate::globals::{
 // use crate::globals::{CanvasStateResource, GraphResource};
 use crate::gpu_render::particle::particle_system::ParticleSystem;
 use crate::graph::edge::EdgeType;
+use crate::input::state_manager::InputStateManager;
 use crate::ui::canvas::data::CanvasWidget;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
@@ -282,6 +283,7 @@ impl eframe::App for TemplateApp {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::LEFT), |ui| {
                     current_zoom(ui, &self.canvas_resource);
                     current_offset(ui, &self.canvas_resource);
+                    current_input_state(ui, &self.canvas_widget.input_manager);
                 });
                 ui.end_row();
                 ui.with_layout(
@@ -357,6 +359,11 @@ fn current_offset(ui: &mut egui::Ui, canvas_state_resource: &CanvasStateResource
     canvas_state_resource.read_canvas_state(|canvas_state| {
         ui.label(format!("offset: {:?}", canvas_state.transform.translation));
     });
+}
+
+fn current_input_state(ui: &mut egui::Ui, input_state_manager: &InputStateManager) {
+    let input_state = &input_state_manager.current_state;
+    ui.label(format!("input_state: {:?}", input_state));
 }
 
 fn setup_font(ctx: &egui::Context) {
