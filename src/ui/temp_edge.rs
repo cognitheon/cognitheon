@@ -2,8 +2,8 @@ use egui::*;
 use petgraph::graph::NodeIndex;
 
 use crate::{
-    globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource},
     graph::{edge::EdgeType, render_info::NodeRenderInfo},
+    resource::{CanvasStateResource, GraphResource},
     ui::line_edge::LineWidget,
 };
 
@@ -53,7 +53,7 @@ impl<'a> Widget for TempEdgeWidget<'a> {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
         // println!("TempEdgeWidget::ui");
 
-        // let temp_edge: TempEdge = graph_resource.read_graph(|graph| graph.get_temp_edge().unwrap());
+        // let temp_edge: TempEdge = graph_resource.read_resource(|graph| graph.get_temp_edge().unwrap());
 
         let node_id = self.temp_edge.source;
         let node_render_info: NodeRenderInfo = ui
@@ -66,7 +66,7 @@ impl<'a> Widget for TempEdgeWidget<'a> {
 
         let edge_type = self
             .graph_resource
-            .read_graph(|graph| graph.edge_type.clone());
+            .read_resource(|graph| graph.edge_type.clone());
         match edge_type {
             EdgeType::Bezier => {
                 // 获取节点中心点

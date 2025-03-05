@@ -17,23 +17,21 @@ impl CanvasWidget {
             make_input_busy(ui);
 
             if CanvasWidget::primary_button_down(ui) {
-                self.canvas_state_resource
-                    .with_canvas_state(|canvas_state| {
-                        // drag_delta() 表示本次帧被拖拽的增量
+                self.canvas_state_resource.with_resource(|canvas_state| {
+                    // drag_delta() 表示本次帧被拖拽的增量
 
-                        let drag_delta = ui.input(|i| i.pointer.delta());
+                    let drag_delta = ui.input(|i| i.pointer.delta());
 
-                        canvas_state.transform.translation += drag_delta;
-                    });
+                    canvas_state.transform.translation += drag_delta;
+                });
             }
         }
 
         // 处理滚动平移
         if let Some(scroll_delta) = CanvasWidget::scrolling(ui) {
-            self.canvas_state_resource
-                .with_canvas_state(|canvas_state| {
-                    canvas_state.transform.translation += scroll_delta;
-                });
+            self.canvas_state_resource.with_resource(|canvas_state| {
+                canvas_state.transform.translation += scroll_delta;
+            });
             make_input_busy(ui);
         }
 
@@ -48,7 +46,7 @@ impl CanvasWidget {
         if CanvasWidget::zooming(ui) {
             // 计算鼠标指针相对于画布原点的偏移
             self.canvas_state_resource
-                .with_canvas_state(|canvas_state: &mut CanvasState| {
+                .with_resource(|canvas_state: &mut CanvasState| {
                     let mouse_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
                     // let mouse_canvas_pos = (mouse_pos - canvas_state.offset) / canvas_state.scale;
                     // // 保存旧的缩放值
@@ -98,7 +96,7 @@ impl CanvasWidget {
         }
 
         if CanvasWidget::drag_select(ui, canvas_response) {
-            self.graph_resource.with_graph(|graph| {
+            self.graph_resource.with_resource(|graph| {
                 graph.set_editing_node(None);
             });
 
@@ -141,7 +139,7 @@ impl CanvasWidget {
     pub fn handle_escape(&mut self, ui: &mut egui::Ui, canvas_response: &Response) {
         if CanvasWidget::escape(ui, canvas_response) {
             self.drag_select_range = None;
-            self.graph_resource.with_graph(|graph| {
+            self.graph_resource.with_resource(|graph| {
                 graph.selected.clear();
                 graph.set_editing_node(None);
             });
@@ -152,18 +150,17 @@ impl CanvasWidget {
         if self.tab_pressed(ui) {
             let selected_node_indices = self
                 .graph_resource
-                .read_graph(|graph| graph.get_selected_nodes());
+                .read_resource(|graph| graph.get_selected_nodes());
 
             let src_node_canvas_pos_vec = selected_node_indices
                 .iter()
                 .map(|index| {
-                    self.canvas_state_resource
-                        .read_canvas_state(|canvas_state| {
-                            canvas_state.to_canvas(
-                                self.graph_resource
-                                    .read_graph(|graph| graph.get_node(*index).unwrap().position),
-                            )
-                        })
+                    self.canvas_state_resource.read_resource(|canvas_state| {
+                        canvas_state.to_canvas(
+                            self.graph_resource
+                                .read_resource(|graph| graph.get_node(*index).unwrap().position),
+                        )
+                    })
                 })
                 .collect::<Vec<Pos2>>();
         }

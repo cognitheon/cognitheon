@@ -36,7 +36,7 @@ impl CanvasWidget {
         //         if let Some(screen_pos) = ui.input(|i| i.pointer.hover_pos()) {
         //             let node = self
         //                 .canvas_state_resource
-        //                 .read_canvas_state(|canvas_state| {
+        //                 .read_resource(|canvas_state| {
         //                     // 将屏幕坐标转换为画布坐标
         //                     let canvas_pos = canvas_state.to_canvas(screen_pos);
         //                     let new_node_id =
@@ -50,7 +50,7 @@ impl CanvasWidget {
         //                     }
         //                 });
 
-        //             self.graph_resource.with_graph(|graph| {
+        //             self.graph_resource.with_resource(|graph| {
         //                 let node_index = graph.add_node(node);
         //                 graph.select_node(node_index);
         //                 graph.set_editing_node(Some(node_index));
@@ -89,7 +89,7 @@ impl CanvasWidget {
         //             // Update target anchor
         //             let mouse_canvas_pos = self
         //                 .canvas_state_resource
-        //                 .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
+        //                 .read_resource(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
 
         //             let node_render_info: Option<NodeRenderInfo> = ui
         //                 .ctx()
@@ -129,7 +129,7 @@ impl CanvasWidget {
         //             );
         //             let source_node_index = self.temp_edge.as_ref().unwrap().source;
 
-        //             let edge_exists = self.graph_resource.read_graph(|graph| {
+        //             let edge_exists = self.graph_resource.read_resource(|graph| {
         //                 graph.edge_exists(source_node_index, target_node_index)
         //             });
         //             if !edge_exists && source_node_index != target_node_index {
@@ -154,7 +154,7 @@ impl CanvasWidget {
         //                     self.canvas_state_resource.clone(),
         //                 );
 
-        //                 self.graph_resource.with_graph(|graph| {
+        //                 self.graph_resource.with_resource(|graph| {
         //                     graph.add_edge(edge);
         //                 });
         //             }
@@ -164,11 +164,11 @@ impl CanvasWidget {
         //             let source_node_index = self.temp_edge.as_ref().unwrap().source;
         //             let mouse_canvas_pos = self
         //                 .canvas_state_resource
-        //                 .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
+        //                 .read_resource(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
         //             let node = Node {
         //                 id: self
         //                     .canvas_state_resource
-        //                     .read_canvas_state(|canvas_state| {
+        //                     .read_resource(|canvas_state| {
         //                         canvas_state.global_node_id.fetch_add(1, Ordering::Relaxed)
         //                     }),
         //                 position: mouse_canvas_pos,
@@ -176,7 +176,7 @@ impl CanvasWidget {
         //                 note: String::new(),
         //             };
 
-        //             self.graph_resource.with_graph(|graph| {
+        //             self.graph_resource.with_resource(|graph| {
         //                 graph.add_node_with_edge(
         //                     node,
         //                     source_node_index,

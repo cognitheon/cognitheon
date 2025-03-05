@@ -1,8 +1,10 @@
+use eframe::egui_wgpu;
 use egui::Id;
 use petgraph::graph::NodeIndex;
 
 use crate::{
     canvas::CanvasState,
+    gpu_render::particle::particle_callback::ParticleCallback,
     graph::{
         anchor::{BezierAnchor, LineAnchor},
         render_info::NodeRenderInfo,
@@ -198,7 +200,7 @@ pub fn draw_grid(ui: &mut egui::Ui, canvas_state: &CanvasState, screen_rect: egu
 
 impl CanvasWidget {
     pub fn hit_test_node(&self, ui: &mut egui::Ui, screen_pos: egui::Pos2) -> Option<NodeIndex> {
-        self.graph_resource.read_graph(|graph| {
+        self.graph_resource.read_resource(|graph| {
             graph.graph.node_indices().find(|&node_index| {
                 let node_render_info: Option<NodeRenderInfo> = ui
                     .ctx()
@@ -206,10 +208,9 @@ impl CanvasWidget {
                 // println!("node_render_info: {:?}", node_render_info);
                 if let Some(node_render_info) = node_render_info {
                     let node_screen_rect =
-                        self.canvas_state_resource
-                            .read_canvas_state(|canvas_state| {
-                                canvas_state.to_screen_rect(node_render_info.canvas_rect)
-                            });
+                        self.canvas_state_resource.read_resource(|canvas_state| {
+                            canvas_state.to_screen_rect(node_render_info.canvas_rect)
+                        });
                     if node_screen_rect.contains(screen_pos) {
                         return true;
                     }
@@ -232,7 +233,7 @@ impl CanvasWidget {
 
         let mouse_canvas_pos = self
             .canvas_state_resource
-            .read_canvas_state(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
+            .read_resource(|canvas_state| canvas_state.to_canvas(mouse_screen_pos));
 
         Some(TempEdge {
             source: node_index,

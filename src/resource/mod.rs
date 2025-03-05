@@ -1,15 +1,15 @@
+use crate::{
+    canvas::CanvasState, gpu_render::particle::particle_system::ParticleSystem,
+    graph::graph_impl::Graph,
+};
 use std::sync::{Arc, RwLock};
 
 // use crate::{canvas::CanvasState, graph::Graph};
 
-pub mod canvas_state_resource;
-pub mod graph_resource;
-pub mod particle_system_resource;
+// pub mod particle_system_resource;
 
-#[derive(Clone, Debug)]
-pub struct Resource<T>(pub Arc<RwLock<T>>)
-where
-    T: Default;
+#[derive(Debug)]
+pub struct Resource<T>(pub Arc<RwLock<T>>);
 
 impl<T> Default for Resource<T>
 where
@@ -20,9 +20,15 @@ where
     }
 }
 
+impl<T> Clone for Resource<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
 impl<T> serde::Serialize for Resource<T>
 where
-    T: serde::Serialize + Default,
+    T: serde::Serialize,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -34,7 +40,7 @@ where
 
 impl<'de, T> serde::Deserialize<'de> for Resource<T>
 where
-    T: serde::de::DeserializeOwned + Default,
+    T: serde::de::DeserializeOwned,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -44,10 +50,7 @@ where
     }
 }
 
-impl<T> Resource<T>
-where
-    T: Default,
-{
+impl<T> Resource<T> {
     pub fn new(value: T) -> Self {
         Self(Arc::new(RwLock::new(value)))
     }
@@ -63,5 +66,6 @@ where
     }
 }
 
-// pub type GraphResource = Resource<Graph>;
-// pub type CanvasStateResource = Resource<CanvasState>;
+pub type GraphResource = Resource<Graph>;
+pub type CanvasStateResource = Resource<CanvasState>;
+pub type ParticleSystemResource = Resource<ParticleSystem>;

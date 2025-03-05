@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use crate::globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource};
 use crate::graph::node::Node;
+use crate::resource::{CanvasStateResource, GraphResource};
 use crate::ui::bezier::BezierEdge;
 use crate::ui::edge::EdgeWidget;
 use crate::ui::line_edge::LineEdge;
@@ -170,13 +170,13 @@ pub fn render_graph(
     graph_resource: GraphResource,
     canvas_state_resource: CanvasStateResource,
 ) {
-    let node_indices =
-        graph_resource.read_graph(|graph| graph.graph.node_indices().collect::<Vec<NodeIndex>>());
+    let node_indices = graph_resource
+        .read_resource(|graph| graph.graph.node_indices().collect::<Vec<NodeIndex>>());
 
     // println!("node_indices: {:?}", node_indices.len());
 
-    let edge_indices =
-        graph_resource.read_graph(|graph| graph.graph.edge_indices().collect::<Vec<EdgeIndex>>());
+    let edge_indices = graph_resource
+        .read_resource(|graph| graph.graph.edge_indices().collect::<Vec<EdgeIndex>>());
 
     for edge_index in edge_indices {
         ui.add(EdgeWidget {

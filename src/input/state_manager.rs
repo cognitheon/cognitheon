@@ -3,11 +3,13 @@
 use std::collections::HashMap;
 
 use crate::{
-    globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource},
+    gpu_render::particle::particle_callback::ParticleCallback,
     graph::render_info::NodeRenderInfo,
     input::{events::InputTarget, input_state::InputState},
+    resource::{CanvasStateResource, GraphResource},
 };
 
+use eframe::egui_wgpu;
 use egui::*;
 use petgraph::graph::{EdgeIndex, NodeIndex};
 
@@ -95,7 +97,7 @@ impl InputContext {
     /// 检查鼠标是否在节点上
     pub fn hit_test_node(&self, ui: &egui::Ui, screen_pos: Pos2) -> Option<NodeIndex> {
         // 使用你现有的命中测试逻辑
-        self.graph_resource.read_graph(|graph| {
+        self.graph_resource.read_resource(|graph| {
             graph.graph.node_indices().find(|&node_index| {
                 let node_render_info: Option<NodeRenderInfo> = ui
                     .ctx()
@@ -103,10 +105,9 @@ impl InputContext {
 
                 if let Some(node_render_info) = node_render_info {
                     let node_screen_rect =
-                        self.canvas_state_resource
-                            .read_canvas_state(|canvas_state| {
-                                canvas_state.to_screen_rect(node_render_info.canvas_rect)
-                            });
+                        self.canvas_state_resource.read_resource(|canvas_state| {
+                            canvas_state.to_screen_rect(node_render_info.canvas_rect)
+                        });
 
                     return node_screen_rect.contains(screen_pos);
                 }
@@ -118,13 +119,13 @@ impl InputContext {
     /// 将屏幕坐标转换为画布坐标
     pub fn screen_to_canvas(&self, screen_pos: Pos2) -> Pos2 {
         self.canvas_state_resource
-            .read_canvas_state(|canvas_state| canvas_state.to_canvas(screen_pos))
+            .read_resource(|canvas_state| canvas_state.to_canvas(screen_pos))
     }
 
     /// 将画布坐标转换为屏幕坐标
     pub fn canvas_to_screen(&self, canvas_pos: Pos2) -> Pos2 {
         self.canvas_state_resource
-            .read_canvas_state(|canvas_state| canvas_state.to_screen(canvas_pos))
+            .read_resource(|canvas_state| canvas_state.to_screen(canvas_pos))
     }
 }
 
@@ -250,7 +251,7 @@ impl InputStateManager {
         match &self.current_state {
             InputState::Idle => {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
-                self.context.graph_resource.with_graph(|graph| {
+                self.context.graph_resource.with_resource(|graph| {
                     graph.set_editing_node(None);
                 });
             }
@@ -321,11 +322,11 @@ impl InputStateManager {
                 let node_already_selected = self
                     .context
                     .graph_resource
-                    .with_graph(|graph| graph.is_node_selected(*node_index));
+                    .read_resource(|graph| graph.is_node_selected(*node_index));
 
                 if shift_pressed {
                     // 添加到现有选择
-                    self.context.graph_resource.with_graph(|graph| {
+                    self.context.graph_resource.with_resource(|graph| {
                         graph.select_node(*node_index);
                     });
                 } else if node_already_selected {
@@ -333,7 +334,7 @@ impl InputStateManager {
                     let selected_nodes = self
                         .context
                         .graph_resource
-                        .with_graph(|graph| graph.get_selected_nodes());
+                        .read_resource(|graph| graph.get_selected_nodes());
 
                     self.transition_to(InputState::DraggingNode {
                         node_index: *node_index,
@@ -343,7 +344,7 @@ impl InputStateManager {
                     });
                 } else {
                     // 新的选择
-                    self.context.graph_resource.with_graph(|graph| {
+                    self.context.graph_resource.with_resource(|graph| {
                         graph.selected.clear();
                         graph.select_node(*node_index);
                     });
@@ -358,7 +359,7 @@ impl InputStateManager {
                 }
             }
             InputTarget::Canvas => {
-                // self.context.graph_resource.with_graph(|graph| {
+                // self.context.graph_resource.with_resource(|graph| {
                 //     graph.selected.clear();
                 // });
                 match &self.current_state {
@@ -372,7 +373,7 @@ impl InputStateManager {
 
                         if !shift_pressed {
                             // 清除现有选择
-                            self.context.graph_resource.with_graph(|graph| {
+                            self.context.graph_resource.with_resource(|graph| {
                                 graph.selected.clear();
                             });
                         }
@@ -395,6 +396,10 @@ impl InputStateManager {
             // 处理其他目标...
             _ => {}
         }
+
+        self.context
+            .pressed_buttons
+            .set(PointerButton::Primary, true);
     }
 
     fn handle_secondary_button_press(&mut self, ui: &mut egui::Ui, target: &InputTarget) {
@@ -414,6 +419,10 @@ impl InputStateManager {
             // 处理其他目标...
             _ => {}
         }
+
+        self.context
+            .pressed_buttons
+            .set(PointerButton::Secondary, true);
     }
 
     fn handle_primary_button_release(&mut self, ui: &mut egui::Ui, target: &InputTarget) {
@@ -447,6 +456,10 @@ impl InputStateManager {
             // 处理其他状态...
             _ => {}
         }
+
+        self.context
+            .pressed_buttons
+            .set(PointerButton::Primary, false);
     }
 
     fn handle_secondary_button_release(&mut self, ui: &mut egui::Ui, target: &InputTarget) {
@@ -476,9 +489,18 @@ impl InputStateManager {
             // 回到空闲状态
             self.transition_to(InputState::Idle);
         }
+
+        self.context
+            .pressed_buttons
+            .set(PointerButton::Secondary, false);
     }
 
     fn handle_mouse_motion(&mut self, ui: &mut egui::Ui, delta: Vec2, target: &InputTarget) {
+        // if self.context.pressed_buttons.get(PointerButton::Primary) {
+        //     println!("draw_particle_system");
+        //     self.draw_particle_system(ui, ui.available_rect_before_wrap());
+        // }
+
         match &self.current_state {
             InputState::Panning {
                 last_cursor_pos: _,
@@ -486,11 +508,9 @@ impl InputStateManager {
             } => {
                 if *dragging {
                     // 更新平移
-                    self.context
-                        .canvas_state_resource
-                        .with_canvas_state(|state| {
-                            state.transform.translation += delta;
-                        });
+                    self.context.canvas_state_resource.with_resource(|state| {
+                        state.transform.translation += delta;
+                    });
 
                     // 更新状态，保持平移
                     self.transition_to(InputState::Panning {
@@ -510,12 +530,12 @@ impl InputStateManager {
                     / self
                         .context
                         .canvas_state_resource
-                        .read_canvas_state(|s| s.transform.scaling);
+                        .read_resource(|s| s.transform.scaling);
 
                 if *is_selection_drag {
                     // 移动所有选中的节点
                     for &idx in selected_indices {
-                        self.context.graph_resource.with_graph(|graph| {
+                        self.context.graph_resource.with_resource(|graph| {
                             if let Some(node) = graph.get_node_mut(idx) {
                                 node.position += scaled_delta;
                             }
@@ -523,7 +543,7 @@ impl InputStateManager {
                     }
                 } else {
                     // 只移动当前节点
-                    self.context.graph_resource.with_graph(|graph| {
+                    self.context.graph_resource.with_resource(|graph| {
                         if let Some(node) = graph.get_node_mut(*node_index) {
                             node.position += scaled_delta;
                         }
@@ -583,7 +603,7 @@ impl InputStateManager {
             self.transition_to(InputState::Idle);
 
             // 清除选择
-            self.context.graph_resource.with_graph(|graph| {
+            self.context.graph_resource.with_resource(|graph| {
                 graph.selected.clear();
                 graph.set_editing_node(None);
             });
@@ -598,7 +618,7 @@ impl InputStateManager {
             return;
         }
         // 删除选中的节点
-        self.context.graph_resource.with_graph(|graph| {
+        self.context.graph_resource.with_resource(|graph| {
             let nodes_to_remove =
                 if let crate::graph::selection::GraphSelection::Node(nodes) = &graph.selected {
                     nodes.clone() // 克隆节点列表
@@ -618,7 +638,7 @@ impl InputStateManager {
         match target {
             InputTarget::Node(node_index) => {
                 // 双击节点开始编辑
-                self.context.graph_resource.with_graph(|graph| {
+                self.context.graph_resource.with_resource(|graph| {
                     graph.set_editing_node(Some(*node_index));
                 });
                 self.transition_to(InputState::EditingNode {
@@ -633,7 +653,7 @@ impl InputStateManager {
                 let new_node_id = self
                     .context
                     .canvas_state_resource
-                    .read_canvas_state(|cs| cs.new_node_id());
+                    .read_resource(|cs| cs.new_node_id());
 
                 let node = crate::graph::node::Node {
                     id: new_node_id,
@@ -642,7 +662,7 @@ impl InputStateManager {
                     note: String::new(),
                 };
 
-                let node_index = self.context.graph_resource.with_graph(|graph| {
+                let node_index = self.context.graph_resource.with_resource(|graph| {
                     let idx = graph.add_node(node);
                     graph.select_node(idx);
                     graph.set_editing_node(Some(idx));
@@ -659,11 +679,9 @@ impl InputStateManager {
     fn handle_scroll(&mut self, delta: Vec2) {
         // 如果没有在执行其他操作，则平移画布
         if matches!(self.current_state, InputState::Idle) {
-            self.context
-                .canvas_state_resource
-                .with_canvas_state(|state| {
-                    state.transform.translation += delta;
-                });
+            self.context.canvas_state_resource.with_resource(|state| {
+                state.transform.translation += delta;
+            });
         }
     }
 
@@ -672,24 +690,22 @@ impl InputStateManager {
         if matches!(self.current_state, InputState::Idle) {
             let mouse_pos = self.context.current_mouse_pos;
 
-            self.context
-                .canvas_state_resource
-                .with_canvas_state(|state| {
-                    let scaling = state.transform.scaling;
-                    if scaling <= 0.1 && delta < 1.0 || scaling >= 100.0 && delta > 1.0 {
-                        return;
-                    }
-                    let pointer_in_layer = state.transform.inverse() * mouse_pos;
+            self.context.canvas_state_resource.with_resource(|state| {
+                let scaling = state.transform.scaling;
+                if scaling <= 0.1 && delta < 1.0 || scaling >= 100.0 && delta > 1.0 {
+                    return;
+                }
+                let pointer_in_layer = state.transform.inverse() * mouse_pos;
 
-                    // 缩放，保持鼠标下方的点不变
-                    state.transform = state.transform
-                        * egui::emath::TSTransform::from_translation(pointer_in_layer.to_vec2())
-                        * egui::emath::TSTransform::from_scaling(delta)
-                        * egui::emath::TSTransform::from_translation(-pointer_in_layer.to_vec2());
+                // 缩放，保持鼠标下方的点不变
+                state.transform = state.transform
+                    * egui::emath::TSTransform::from_translation(pointer_in_layer.to_vec2())
+                    * egui::emath::TSTransform::from_scaling(delta)
+                    * egui::emath::TSTransform::from_translation(-pointer_in_layer.to_vec2());
 
-                    // 最终scaling截断
-                    state.transform.scaling = state.transform.scaling.clamp(0.1, 100.0);
-                });
+                // 最终scaling截断
+                state.transform.scaling = state.transform.scaling.clamp(0.1, 100.0);
+            });
         }
     }
 
@@ -715,7 +731,7 @@ impl InputStateManager {
             egui::Rect::from_min_max(egui::pos2(min_x, min_y), egui::pos2(max_x, max_y));
 
         // 找出在矩形内的节点
-        self.context.graph_resource.with_graph(|graph| {
+        self.context.graph_resource.with_resource(|graph| {
             // 首先找出新选中的节点
             let new_selected: Vec<NodeIndex> = graph
                 .graph
@@ -783,50 +799,54 @@ impl InputStateManager {
 
     fn draw_temp_edge(&self, ui: &mut egui::Ui, source_node: NodeIndex, target_pos: Pos2) {
         // 获取源节点的位置
+        let render_info: Option<NodeRenderInfo> = ui
+            .ctx()
+            .data(|d| d.get_temp(Id::new(source_node.index().to_string())));
+        if let Some(render_info) = render_info {
+            let source_pos = render_info.canvas_rect.center();
+            // 转换为屏幕坐标
+            let source_screen = self.context.canvas_to_screen(source_pos);
+            // 绘制临时边
+            let painter = ui.painter();
+            painter.line_segment(
+                [source_screen, target_pos],
+                egui::Stroke::new(2.0, egui::Color32::YELLOW),
+            );
+
+            // 绘制箭头
+            let dir = (target_pos - source_screen).normalized();
+            let arrow_len = 10.0;
+            let arrow_angle = 30.0 * std::f32::consts::PI / 180.0;
+
+            let left = target_pos
+                - arrow_len
+                    * egui::vec2(
+                        dir.x * arrow_angle.cos() - dir.y * arrow_angle.sin(),
+                        dir.x * arrow_angle.sin() + dir.y * arrow_angle.cos(),
+                    );
+
+            let right = target_pos
+                - arrow_len
+                    * egui::vec2(
+                        dir.x * arrow_angle.cos() + dir.y * arrow_angle.sin(),
+                        -dir.x * arrow_angle.sin() + dir.y * arrow_angle.cos(),
+                    );
+
+            painter.line_segment(
+                [target_pos, left],
+                egui::Stroke::new(2.0, egui::Color32::YELLOW),
+            );
+
+            painter.line_segment(
+                [target_pos, right],
+                egui::Stroke::new(2.0, egui::Color32::YELLOW),
+            );
+        }
         let source_pos = self
             .context
             .graph_resource
-            .read_graph(|graph| graph.get_node(source_node).map(|node| node.position))
+            .read_resource(|graph| graph.get_node(source_node).map(|node| node.position))
             .unwrap_or(Pos2::ZERO);
-
-        // 转换为屏幕坐标
-        let source_screen = self.context.canvas_to_screen(source_pos);
-
-        // 绘制临时边
-        let painter = ui.painter();
-        painter.line_segment(
-            [source_screen, target_pos],
-            egui::Stroke::new(2.0, egui::Color32::YELLOW),
-        );
-
-        // 绘制箭头
-        let dir = (target_pos - source_screen).normalized();
-        let arrow_len = 10.0;
-        let arrow_angle = 30.0 * std::f32::consts::PI / 180.0;
-
-        let left = target_pos
-            - arrow_len
-                * egui::vec2(
-                    dir.x * arrow_angle.cos() - dir.y * arrow_angle.sin(),
-                    dir.x * arrow_angle.sin() + dir.y * arrow_angle.cos(),
-                );
-
-        let right = target_pos
-            - arrow_len
-                * egui::vec2(
-                    dir.x * arrow_angle.cos() + dir.y * arrow_angle.sin(),
-                    -dir.x * arrow_angle.sin() + dir.y * arrow_angle.cos(),
-                );
-
-        painter.line_segment(
-            [target_pos, left],
-            egui::Stroke::new(2.0, egui::Color32::YELLOW),
-        );
-
-        painter.line_segment(
-            [target_pos, right],
-            egui::Stroke::new(2.0, egui::Color32::YELLOW),
-        );
     }
 
     fn create_edge(&mut self, source: NodeIndex, target: NodeIndex) {
@@ -834,11 +854,11 @@ impl InputStateManager {
         let edge_exists = self
             .context
             .graph_resource
-            .read_graph(|graph| graph.edge_exists(source, target));
+            .read_resource(|graph| graph.edge_exists(source, target));
 
         if !edge_exists {
             // 获取源节点和目标节点的位置
-            let (source_pos, target_pos) = self.context.graph_resource.read_graph(|graph| {
+            let (source_pos, target_pos) = self.context.graph_resource.read_resource(|graph| {
                 (
                     graph
                         .get_node(source)
@@ -861,7 +881,7 @@ impl InputStateManager {
             );
 
             // 添加到图中
-            self.context.graph_resource.with_graph(|graph| {
+            self.context.graph_resource.with_resource(|graph| {
                 graph.add_edge(edge);
             });
         }
@@ -872,7 +892,7 @@ impl InputStateManager {
         let new_node_id = self
             .context
             .canvas_state_resource
-            .read_canvas_state(|cs| cs.new_node_id());
+            .read_resource(|cs| cs.new_node_id());
 
         let node = crate::graph::node::Node {
             id: new_node_id,
@@ -882,8 +902,34 @@ impl InputStateManager {
         };
 
         // 添加节点并创建边
-        self.context.graph_resource.with_graph(|graph| {
+        self.context.graph_resource.with_resource(|graph| {
             graph.add_node_with_edge(node, source, self.context.canvas_state_resource.clone());
         });
+    }
+
+    pub fn draw_particle_system(&self, ui: &mut egui::Ui, screen_rect: egui::Rect) {
+        // 获取当前帧的时间间隔
+        // println!("screen_rect: {:?}", screen_rect);
+
+        let mouse_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
+        let offset_pos = screen_rect.min;
+        let mouse_pos = Pos2::new(mouse_pos.x - offset_pos.x, mouse_pos.y - offset_pos.y);
+        // println!("mouse_pos: {:?}", mouse_pos);
+        if self.context.pressed_buttons.get(PointerButton::Primary) {
+            self.draw_particle_system_with_mouse_pos(ui, mouse_pos, screen_rect);
+        }
+    }
+
+    fn draw_particle_system_with_mouse_pos(
+        &self,
+        ui: &mut egui::Ui,
+        mouse_pos: Pos2,
+        screen_rect: egui::Rect,
+    ) {
+        let dt = ui.ctx().input(|i| i.stable_dt);
+        ui.painter().add(egui_wgpu::Callback::new_paint_callback(
+            screen_rect,
+            ParticleCallback::new([mouse_pos.x, mouse_pos.y], dt, screen_rect),
+        ));
     }
 }

@@ -3,7 +3,7 @@ use std::fmt::Display;
 use petgraph::graph::NodeIndex;
 
 use crate::{
-    globals::canvas_state_resource::CanvasStateResource,
+    resource::CanvasStateResource,
     ui::{bezier::BezierEdge, line_edge::LineEdge},
 };
 
@@ -28,7 +28,7 @@ impl Edge {
         canvas_state_resource: CanvasStateResource,
     ) -> Self {
         let edge_id =
-            canvas_state_resource.read_canvas_state(|canvas_state| canvas_state.new_edge_id());
+            canvas_state_resource.read_resource(|canvas_state| canvas_state.new_edge_id());
         Self {
             id: edge_id,
             source,

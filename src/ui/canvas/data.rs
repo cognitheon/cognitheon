@@ -2,8 +2,8 @@ use egui::Pos2;
 use petgraph::graph::NodeIndex;
 
 use crate::{
-    globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource},
     input::{input_state::InputState, state_manager::InputStateManager},
+    resource::{CanvasStateResource, GraphResource, ParticleSystemResource},
     ui::temp_edge::TempEdge,
 };
 
@@ -14,13 +14,18 @@ pub struct CanvasWidget {
     pub temp_edge: Option<TempEdge>,
     pub graph_resource: GraphResource,
     pub canvas_state_resource: CanvasStateResource,
+    // pub particle_system_resource: ParticleSystemResource,
     // pub input_state: InputState,
     pub input_busy: bool,
     pub drag_select_range: Option<[Pos2; 2]>,
 }
 
 impl CanvasWidget {
-    pub fn new(graph_resource: GraphResource, canvas_state_resource: CanvasStateResource) -> Self {
+    pub fn new(
+        graph_resource: GraphResource,
+        canvas_state_resource: CanvasStateResource,
+        // particle_system_resource: ParticleSystemResource,
+    ) -> Self {
         Self {
             input_manager: InputStateManager::new(
                 graph_resource.clone(),
@@ -30,6 +35,7 @@ impl CanvasWidget {
             temp_edge: None,
             graph_resource,
             canvas_state_resource,
+            // particle_system_resource,
             input_busy: false,
             drag_select_range: None,
         }
@@ -39,10 +45,10 @@ impl CanvasWidget {
         if let Some(range) = self.drag_select_range {
             let start_canvas = self
                 .canvas_state_resource
-                .read_canvas_state(|canvas_state| canvas_state.to_canvas(range[0]));
+                .read_resource(|canvas_state| canvas_state.to_canvas(range[0]));
             let end_canvas = self
                 .canvas_state_resource
-                .read_canvas_state(|canvas_state| canvas_state.to_canvas(range[1]));
+                .read_resource(|canvas_state| canvas_state.to_canvas(range[1]));
 
             let min_canvas_pos = Pos2::new(
                 start_canvas.x.min(end_canvas.x),
@@ -53,7 +59,7 @@ impl CanvasWidget {
                 start_canvas.y.max(end_canvas.y),
             );
 
-            let node_indices = self.graph_resource.read_graph(|graph| {
+            let node_indices = self.graph_resource.read_resource(|graph| {
                 graph
                     .graph
                     .node_indices()
@@ -72,7 +78,7 @@ impl CanvasWidget {
             });
 
             // println!("node_indices: {:?}", node_indices);
-            self.graph_resource.with_graph(|graph| {
+            self.graph_resource.with_resource(|graph| {
                 graph.selected.clear();
                 graph.select_nodes(node_indices);
             });

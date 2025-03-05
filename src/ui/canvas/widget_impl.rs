@@ -13,10 +13,9 @@ impl Widget for &mut CanvasWidget {
 
         // println!("desired_size: {:?}", desired_size);
 
-        self.canvas_state_resource
-            .read_canvas_state(|canvas_state| {
-                draw_grid(ui, canvas_state, screen_rect);
-            });
+        self.canvas_state_resource.read_resource(|canvas_state| {
+            draw_grid(ui, canvas_state, screen_rect);
+        });
 
         self.input_manager.update(ui, &canvas_response);
 
@@ -29,7 +28,7 @@ impl Widget for &mut CanvasWidget {
             });
         }
 
-        // self.graph_resource.with_graph(|graph| {
+        // self.graph_resource.with_resource(|graph| {
         crate::graph::graph_impl::render_graph(
             ui,
             self.graph_resource.clone(),
@@ -51,8 +50,9 @@ impl Widget for &mut CanvasWidget {
             offset,
         );
 
-        self.update_selected_nodes();
-
+        // self.update_selected_nodes();
+        // self.draw_particle_system(ui, screen_rect);
+        self.input_manager.draw_particle_system(ui, screen_rect);
         // self.post_render_actions(ui, &canvas_response);
 
         canvas_response

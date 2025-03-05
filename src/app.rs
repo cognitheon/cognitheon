@@ -4,10 +4,7 @@ use egui::{Align, ComboBox, Id, Layout, RichText};
 use rfd::AsyncFileDialog;
 use tokio::runtime::{Builder, Runtime};
 
-use crate::globals::{
-    canvas_state_resource::CanvasStateResource, graph_resource::GraphResource,
-    particle_system_resource::ParticleSystemResource,
-};
+use crate::resource::{CanvasStateResource, GraphResource, ParticleSystemResource};
 // use crate::globals::{CanvasStateResource, GraphResource};
 use crate::gpu_render::particle::particle_system::ParticleSystem;
 use crate::graph::edge::EdgeType;
@@ -181,7 +178,7 @@ impl eframe::App for TemplateApp {
                     ui.menu_button("File", |ui| {
                         if ui.button("New").clicked() {
                             println!("new");
-                            self.graph_resource.with_graph(|graph| graph.reset());
+                            self.graph_resource.with_resource(|graph| graph.reset());
                         }
 
                         if ui.button("Save").clicked() {
@@ -256,7 +253,7 @@ impl eframe::App for TemplateApp {
 
                 let mut edge_type = self
                     .graph_resource
-                    .read_graph(|graph| graph.edge_type.clone());
+                    .read_resource(|graph| graph.edge_type.clone());
                 ComboBox::from_label("Edge Type")
                     .selected_text(format!("{:?}", edge_type))
                     .show_ui(ui, |ui| {
@@ -265,14 +262,14 @@ impl eframe::App for TemplateApp {
                             .clicked()
                         {
                             self.graph_resource
-                                .with_graph(|graph| graph.edge_type = EdgeType::Bezier);
+                                .with_resource(|graph| graph.edge_type = EdgeType::Bezier);
                         }
                         if ui
                             .selectable_value(&mut edge_type, EdgeType::Line, "Line")
                             .clicked()
                         {
                             self.graph_resource
-                                .with_graph(|graph| graph.edge_type = EdgeType::Line);
+                                .with_resource(|graph| graph.edge_type = EdgeType::Line);
                         }
                     });
             });
@@ -284,6 +281,7 @@ impl eframe::App for TemplateApp {
                     current_zoom(ui, &self.canvas_resource);
                     current_offset(ui, &self.canvas_resource);
                     current_input_state(ui, &self.canvas_widget.input_manager);
+                    current_fps(ui, &self.canvas_widget.input_manager);
                 });
                 ui.end_row();
                 ui.with_layout(
@@ -348,7 +346,7 @@ fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
 
 fn current_zoom(ui: &mut egui::Ui, canvas_state_resource: &CanvasStateResource) {
     // 获取当前缩放
-    canvas_state_resource.read_canvas_state(|canvas_state| {
+    canvas_state_resource.read_resource(|canvas_state| {
         ui.label(format!("zoom: {:.2}", canvas_state.transform.scaling));
     });
     // let zoom = ui.input(|i| i.zoom_delta());
@@ -356,7 +354,7 @@ fn current_zoom(ui: &mut egui::Ui, canvas_state_resource: &CanvasStateResource) 
 }
 
 fn current_offset(ui: &mut egui::Ui, canvas_state_resource: &CanvasStateResource) {
-    canvas_state_resource.read_canvas_state(|canvas_state| {
+    canvas_state_resource.read_resource(|canvas_state| {
         ui.label(format!("offset: {:?}", canvas_state.transform.translation));
     });
 }
@@ -364,6 +362,11 @@ fn current_offset(ui: &mut egui::Ui, canvas_state_resource: &CanvasStateResource
 fn current_input_state(ui: &mut egui::Ui, input_state_manager: &InputStateManager) {
     let input_state = &input_state_manager.current_state;
     ui.label(format!("input_state: {:?}", input_state));
+}
+
+fn current_fps(ui: &mut egui::Ui, input_state_manager: &InputStateManager) {
+    let dt = ui.ctx().input(|i| i.stable_dt);
+    ui.label(format!("fps: {:?}", 1.0 / dt));
 }
 
 fn setup_font(ctx: &egui::Context) {

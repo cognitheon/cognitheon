@@ -1,6 +1,6 @@
-use egui::*;
+use egui::{CursorIcon, Id, PointerButton, Pos2, Rect, Response, Sense, Shape, Stroke, Ui, Widget};
 
-use crate::{globals::canvas_state_resource::CanvasStateResource, graph::anchor::BezierAnchor};
+use crate::{graph::anchor::BezierAnchor, resource::CanvasStateResource};
 
 use super::helpers::draw_dashed_rect_with_offset;
 
@@ -155,7 +155,7 @@ impl BezierWidget {
         let hit_radius: f32 = 10.0
             * self
                 .canvas_state_resource
-                .read_canvas_state(|canvas_state| canvas_state.transform.scaling);
+                .read_resource(|canvas_state| canvas_state.transform.scaling);
 
         let full_anchors = std::iter::once(&self.edge.source_anchor)
             .chain(self.edge.control_anchors.iter())
@@ -233,11 +233,9 @@ impl BezierWidget {
 
     pub fn apply_actions(&mut self, response: &egui::Response, ui: &mut Ui) {
         // println!("hover pos: {:?}", response.hover_pos());
-        let mouse_canvas_pos = self
-            .canvas_state_resource
-            .read_canvas_state(|canvas_state| {
-                canvas_state.to_canvas(response.hover_pos().unwrap_or_default())
-            });
+        let mouse_canvas_pos = self.canvas_state_resource.read_resource(|canvas_state| {
+            canvas_state.to_canvas(response.hover_pos().unwrap_or_default())
+        });
 
         // 拖拽锚点
         if self.dragging == DragType::Anchor {
@@ -317,7 +315,7 @@ impl BezierWidget {
         let delta = ui.input(|i| i.pointer.delta())
             / self
                 .canvas_state_resource
-                .read_canvas_state(|canvas_state| canvas_state.transform.scaling);
+                .read_resource(|canvas_state| canvas_state.transform.scaling);
         self.edge.source_anchor.canvas_pos += delta;
         self.edge.target_anchor.canvas_pos += delta;
         // 拖拽控制锚点
@@ -347,7 +345,7 @@ impl BezierWidget {
         let delta = ui.input(|i| i.pointer.delta())
             / self
                 .canvas_state_resource
-                .read_canvas_state(|canvas_state| canvas_state.transform.scaling);
+                .read_resource(|canvas_state| canvas_state.transform.scaling);
         anchor.canvas_pos += delta;
         anchor.handle_in_canvas_pos += delta;
         anchor.handle_out_canvas_pos += delta;
@@ -369,7 +367,7 @@ impl BezierWidget {
         let delta = ui.input(|i| i.pointer.delta())
             / self
                 .canvas_state_resource
-                .read_canvas_state(|canvas_state| canvas_state.transform.scaling);
+                .read_resource(|canvas_state| canvas_state.transform.scaling);
         anchor.handle_in_canvas_pos += delta;
 
         if anchor.is_smooth {
@@ -390,7 +388,7 @@ impl BezierWidget {
         let delta = ui.input(|i| i.pointer.delta())
             / self
                 .canvas_state_resource
-                .read_canvas_state(|canvas_state| canvas_state.transform.scaling);
+                .read_resource(|canvas_state| canvas_state.transform.scaling);
         anchor.handle_out_canvas_pos += delta;
 
         if anchor.is_smooth {
@@ -416,7 +414,7 @@ impl BezierWidget {
             let radius = 3.0
                 * self
                     .canvas_state_resource
-                    .read_canvas_state(|canvas_state| canvas_state.transform.scaling);
+                    .read_resource(|canvas_state| canvas_state.transform.scaling);
 
             // let color = if anchor.selected {
             //     egui::Color32::GOLD
@@ -426,23 +424,19 @@ impl BezierWidget {
             let color = egui::Color32::GOLD;
             let circle_screen_pos = self
                 .canvas_state_resource
-                .read_canvas_state(|canvas_state| canvas_state.to_screen(anchor.canvas_pos));
+                .read_resource(|canvas_state| canvas_state.to_screen(anchor.canvas_pos));
 
             if i != 0 && i != full_anchors.len() - 1 {
                 // 绘制锚点
                 painter.circle(circle_screen_pos, radius, color, (1.0, egui::Color32::GOLD));
             }
 
-            let handle_in_screen_pos =
-                self.canvas_state_resource
-                    .read_canvas_state(|canvas_state| {
-                        canvas_state.to_screen(anchor.handle_in_canvas_pos)
-                    });
-            let handle_out_screen_pos =
-                self.canvas_state_resource
-                    .read_canvas_state(|canvas_state| {
-                        canvas_state.to_screen(anchor.handle_out_canvas_pos)
-                    });
+            let handle_in_screen_pos = self
+                .canvas_state_resource
+                .read_resource(|canvas_state| canvas_state.to_screen(anchor.handle_in_canvas_pos));
+            let handle_out_screen_pos = self
+                .canvas_state_resource
+                .read_resource(|canvas_state| canvas_state.to_screen(anchor.handle_out_canvas_pos));
 
             // 绘制控制柄线
 
@@ -488,21 +482,17 @@ impl BezierWidget {
                 let canvas_start = full_anchors[i].canvas_pos;
                 let screen_start = self
                     .canvas_state_resource
-                    .read_canvas_state(|canvas_state| canvas_state.to_screen(canvas_start));
+                    .read_resource(|canvas_state| canvas_state.to_screen(canvas_start));
                 let canvas_end = full_anchors[i + 1].canvas_pos;
                 let screen_end = self
                     .canvas_state_resource
-                    .read_canvas_state(|canvas_state| canvas_state.to_screen(canvas_end));
-                let screen_cp1 = self
-                    .canvas_state_resource
-                    .read_canvas_state(|canvas_state| {
-                        canvas_state.to_screen(full_anchors[i].handle_out_canvas_pos)
-                    });
-                let screen_cp2 = self
-                    .canvas_state_resource
-                    .read_canvas_state(|canvas_state| {
-                        canvas_state.to_screen(full_anchors[i + 1].handle_in_canvas_pos)
-                    });
+                    .read_resource(|canvas_state| canvas_state.to_screen(canvas_end));
+                let screen_cp1 = self.canvas_state_resource.read_resource(|canvas_state| {
+                    canvas_state.to_screen(full_anchors[i].handle_out_canvas_pos)
+                });
+                let screen_cp2 = self.canvas_state_resource.read_resource(|canvas_state| {
+                    canvas_state.to_screen(full_anchors[i + 1].handle_in_canvas_pos)
+                });
 
                 // 细分三次贝塞尔曲线为线段
                 for t in 0..=100 {
@@ -523,7 +513,7 @@ impl BezierWidget {
     //     let bounding_rect = self.bounding_rect(100);
     //     let screen_rect = self
     //         .canvas_state_resource
-    //         .read_canvas_state(|canvas_state| canvas_state.to_screen_rect(bounding_rect));
+    //         .read_resource(|canvas_state| canvas_state.to_screen_rect(bounding_rect));
     //     painter.rect(
     //         screen_rect,
     //         0.0,
@@ -535,7 +525,7 @@ impl BezierWidget {
     fn draw_arrow(&self, painter: &egui::Painter) {
         let scale = self
             .canvas_state_resource
-            .read_canvas_state(|canvas_state| canvas_state.transform.scaling);
+            .read_resource(|canvas_state| canvas_state.transform.scaling);
 
         // 箭头的原始长度（例如 10.0），再乘以缩放系数
         let arrow_length = 10.0 * scale;
@@ -548,7 +538,7 @@ impl BezierWidget {
         let target_anchor = &self.edge.target_anchor;
         let screen_end = self
             .canvas_state_resource
-            .read_canvas_state(|canvas_state| canvas_state.to_screen(target_anchor.canvas_pos));
+            .read_resource(|canvas_state| canvas_state.to_screen(target_anchor.canvas_pos));
 
         // 这里假设你希望使用 (p3 - p2) （即 target_anchor.canvas_pos - target_anchor.handle_in_canvas_pos）
         // 来表示 t=1 处贝塞尔曲线的切线方向
@@ -558,12 +548,10 @@ impl BezierWidget {
         if world_dir.length() > f32::EPSILON {
             let screen_dir_start = self
                 .canvas_state_resource
-                .read_canvas_state(|canvas_state| canvas_state.to_screen(target_anchor.canvas_pos));
-            let screen_dir_end = self
-                .canvas_state_resource
-                .read_canvas_state(|canvas_state| {
-                    canvas_state.to_screen(target_anchor.canvas_pos - world_dir)
-                });
+                .read_resource(|canvas_state| canvas_state.to_screen(target_anchor.canvas_pos));
+            let screen_dir_end = self.canvas_state_resource.read_resource(|canvas_state| {
+                canvas_state.to_screen(target_anchor.canvas_pos - world_dir)
+            });
             let dir = screen_dir_end - screen_dir_start;
 
             // 箭头长度
@@ -594,7 +582,7 @@ impl BezierWidget {
         let bounding_rect = self.bounding_rect(100);
         let screen_rect = self
             .canvas_state_resource
-            .read_canvas_state(|canvas_state| canvas_state.to_screen_rect(bounding_rect));
+            .read_resource(|canvas_state| canvas_state.to_screen_rect(bounding_rect));
 
         // 这里记录 offset 并且在每帧累加
         // 比如让它每秒增加 120 像素，“速度”可以自己调
@@ -640,7 +628,7 @@ impl Widget for &mut BezierWidget {
         let bounding_rect = self.bounding_rect(100);
         let screen_rect = self
             .canvas_state_resource
-            .read_canvas_state(|canvas_state| canvas_state.to_screen_rect(bounding_rect));
+            .read_resource(|canvas_state| canvas_state.to_screen_rect(bounding_rect));
 
         let response = ui.allocate_rect(screen_rect, Sense::click_and_drag());
 

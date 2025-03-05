@@ -11,7 +11,7 @@ impl CanvasStateResource {
         f(&mut canvas_state)
     }
 
-    pub fn read_canvas_state<T>(&self, f: impl FnOnce(&CanvasState) -> T) -> T {
+    pub fn read_resource<T>(&self, f: impl FnOnce(&CanvasState) -> T) -> T {
         let canvas_state = self.0.read().unwrap();
         f(&canvas_state)
     }

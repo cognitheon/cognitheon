@@ -1,6 +1,6 @@
 use egui::*;
 
-use crate::{globals::canvas_state_resource::CanvasStateResource, graph::anchor::LineAnchor};
+use crate::{graph::anchor::LineAnchor, resource::CanvasStateResource};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct LineEdge {
@@ -34,14 +34,10 @@ impl LineWidget {
         // 将画布坐标转换为屏幕坐标
         let source_screen_pos = self
             .canvas_state_resource
-            .read_canvas_state(|canvas_state| {
-                canvas_state.to_screen(self.line_edge.source.canvas_pos)
-            });
+            .read_resource(|canvas_state| canvas_state.to_screen(self.line_edge.source.canvas_pos));
         let target_screen_pos = self
             .canvas_state_resource
-            .read_canvas_state(|canvas_state| {
-                canvas_state.to_screen(self.line_edge.target.canvas_pos)
-            });
+            .read_resource(|canvas_state| canvas_state.to_screen(self.line_edge.target.canvas_pos));
 
         // 计算方向向量
         let dir = target_screen_pos - source_screen_pos;
@@ -78,10 +74,10 @@ impl Widget for LineWidget {
 
         let source_screen_pos = self
             .canvas_state_resource
-            .read_canvas_state(|canvas_state| canvas_state.to_screen(source_canvas_pos));
+            .read_resource(|canvas_state| canvas_state.to_screen(source_canvas_pos));
         let target_screen_pos = self
             .canvas_state_resource
-            .read_canvas_state(|canvas_state| canvas_state.to_screen(target_canvas_pos));
+            .read_resource(|canvas_state| canvas_state.to_screen(target_canvas_pos));
         let stroke = Stroke::new(2.0, Color32::GRAY);
         painter.line_segment([source_screen_pos, target_screen_pos], stroke);
         self.draw_arrow(ui);

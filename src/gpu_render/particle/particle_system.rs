@@ -167,12 +167,12 @@ impl ParticleSystem {
 
     /// 每帧更新逻辑（CPU 端）
     pub fn update_particles(&mut self, dt: f32, mouse_pos: Option<[f32; 2]>, _rect: egui::Rect) {
-        println!("fps: {:?}", 1.0 / dt);
+        // println!("fps: {:?}", 1.0 / dt);
         // 衰减所有已存在的粒子寿命
         for p in &mut self.particles {
             if p.life > 0.0 {
                 p.random_vel(self.max_vel);
-                p.life -= dt;
+                p.life -= dt * 5.0;
                 // 如果粒子还活着，就更新位置
                 if p.life > 0.0 {
                     p.pos[0] += p.vel[0] * dt;

@@ -3,13 +3,13 @@ use petgraph::graph::EdgeIndex;
 
 use crate::{
     geometry::{edge_offset_direction, intersect_rect_with_pos, IntersectDirection},
-    globals::{canvas_state_resource::CanvasStateResource, graph_resource::GraphResource},
     graph::{
         anchor::{BezierAnchor, LineAnchor},
         edge::EdgeType,
         helpers::{get_node_render_info, node_rect_center},
         render_info::NodeRenderInfo,
     },
+    resource::{CanvasStateResource, GraphResource},
 };
 
 use super::{
@@ -29,12 +29,12 @@ impl EdgeWidget {
         // 获取首尾节点
         let (src_node_index, dst_node_index) = self
             .graph_resource
-            .read_graph(|graph| graph.graph.edge_endpoints(self.edge_index))
+            .read_resource(|graph| graph.graph.edge_endpoints(self.edge_index))
             .unwrap();
 
         let edge_count = self
             .graph_resource
-            .read_graph(|graph| graph.edge_count_undirected(src_node_index, dst_node_index));
+            .read_resource(|graph| graph.edge_count_undirected(src_node_index, dst_node_index));
         // println!("edge_count: {:?}", edge_count);
 
         // 获取首尾节点中心点
@@ -112,7 +112,7 @@ impl EdgeWidget {
         // 获取已有贝塞尔曲线控制点锚点
         let bezier_edge = self
             .graph_resource
-            .read_graph(|graph| graph.get_edge(self.edge_index).unwrap().bezier_edge.clone());
+            .read_resource(|graph| graph.get_edge(self.edge_index).unwrap().bezier_edge.clone());
         let control_anchors = bezier_edge.control_anchors;
 
         let new_bezier_edge =
@@ -124,7 +124,7 @@ impl EdgeWidget {
         // );
         // new_bezier_edge.update_control_anchors(control_anchors);
 
-        self.graph_resource.with_graph(|graph| {
+        self.graph_resource.with_resource(|graph| {
             graph.update_bezier_edge(self.edge_index, new_bezier_edge);
         });
     }
@@ -133,12 +133,12 @@ impl EdgeWidget {
         // 获取首尾节点
         let (src_node_index, dst_node_index) = self
             .graph_resource
-            .read_graph(|graph| graph.graph.edge_endpoints(self.edge_index))
+            .read_resource(|graph| graph.graph.edge_endpoints(self.edge_index))
             .unwrap();
 
         let edge_count = self
             .graph_resource
-            .read_graph(|graph| graph.edge_count_undirected(src_node_index, dst_node_index));
+            .read_resource(|graph| graph.edge_count_undirected(src_node_index, dst_node_index));
         // println!("edge_count: {:?}", edge_count);
 
         // 获取首尾节点中心点
@@ -183,7 +183,7 @@ impl EdgeWidget {
             LineAnchor::new(target_canvas_pos),
         );
 
-        self.graph_resource.with_graph(|graph| {
+        self.graph_resource.with_resource(|graph| {
             graph.update_line_edge(self.edge_index, new_line_edge);
         });
     }
@@ -197,10 +197,10 @@ impl Widget for EdgeWidget {
 
         let edge_type = self
             .graph_resource
-            .read_graph(|graph| graph.edge_type.clone());
+            .read_resource(|graph| graph.edge_type.clone());
         let response = match edge_type {
             EdgeType::Bezier => {
-                let bezier_edge = self.graph_resource.read_graph(|graph| {
+                let bezier_edge = self.graph_resource.read_resource(|graph| {
                     graph.get_edge(self.edge_index).unwrap().bezier_edge.clone()
                 });
                 ui.add(&mut BezierWidget::new(
@@ -209,9 +209,9 @@ impl Widget for EdgeWidget {
                 ))
             }
             EdgeType::Line => {
-                let line_edge = self
-                    .graph_resource
-                    .read_graph(|graph| graph.get_edge(self.edge_index).unwrap().line_edge.clone());
+                let line_edge = self.graph_resource.read_resource(|graph| {
+                    graph.get_edge(self.edge_index).unwrap().line_edge.clone()
+                });
                 ui.add(LineWidget::new(
                     line_edge.clone(),
                     self.canvas_state_resource,

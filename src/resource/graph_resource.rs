@@ -36,12 +36,12 @@ impl<'de> serde::Deserialize<'de> for GraphResource {
 }
 
 impl GraphResource {
-    pub fn with_graph<T>(&self, f: impl FnOnce(&mut Graph) -> T) -> T {
+    pub fn with_resource<T>(&self, f: impl FnOnce(&mut Graph) -> T) -> T {
         let mut graph = self.0.write().unwrap();
         f(&mut graph)
     }
 
-    pub fn read_graph<T>(&self, f: impl FnOnce(&Graph) -> T) -> T {
+    pub fn read_resource<T>(&self, f: impl FnOnce(&Graph) -> T) -> T {
         let graph = self.0.read().unwrap();
         f(&graph)
     }

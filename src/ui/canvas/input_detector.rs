@@ -66,6 +66,6 @@ impl CanvasWidget {
             && ui.input(|i| i.key_pressed(egui::Key::Tab))
             && self
                 .graph_resource
-                .read_graph(|graph| graph.editing_node == None && graph.selected.is_nodes())
+                .read_resource(|graph| graph.editing_node == None && graph.selected.is_nodes())
     }
 }

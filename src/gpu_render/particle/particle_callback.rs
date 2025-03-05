@@ -4,7 +4,7 @@ use eframe::{
 };
 use egui::PaintCallbackInfo;
 
-use crate::globals::particle_system_resource::ParticleSystemResource;
+use crate::resource::ParticleSystemResource;
 
 pub struct ParticleCallback {
     pub mouse_pos: Option<[f32; 2]>,
@@ -35,7 +35,7 @@ impl CallbackTrait for ParticleCallback {
         let particle_system_resource: &ParticleSystemResource = resources.get().unwrap();
         // println!("particle_system_resource: {:?}", particle_system_resource);
 
-        particle_system_resource.with_particle_system(|particle_system| {
+        particle_system_resource.with_resource(|particle_system| {
             // 1. 在 CPU 端更新粒子
             particle_system.update_particles(self.dt, self.mouse_pos, self.rect);
 
@@ -60,9 +60,10 @@ impl CallbackTrait for ParticleCallback {
         resources: &CallbackResources,
     ) {
         let particle_system_resource: &ParticleSystemResource = resources.get().unwrap();
-        particle_system_resource.read_particle_system(|particle_system| {
+        particle_system_resource.read_resource(|particle_system| {
             // 这里我们直接画全部的粒子
             let particle_count = particle_system.particles.len() as u32;
+            // println!("particle_count: {:?}", particle_count);
             particle_system.paint(render_pass, particle_count);
         });
     }

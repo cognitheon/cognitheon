@@ -16,8 +16,9 @@ fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
     let native_options = eframe::NativeOptions {
+        vsync: true,
         wgpu_options: egui_wgpu::WgpuConfiguration {
-            present_mode: wgpu::PresentMode::AutoNoVsync,
+            present_mode: wgpu::PresentMode::AutoVsync,
             desired_maximum_frame_latency: Some(1),
             on_surface_error: Arc::new(|e| {
                 println!("WGPU error: {e:?}");

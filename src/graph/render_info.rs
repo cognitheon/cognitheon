@@ -1,4 +1,4 @@
-use crate::globals::canvas_state_resource::CanvasStateResource;
+use crate::resource::CanvasStateResource;
 
 #[derive(serde::Serialize, serde::Deserialize, Copy, Clone, Debug)]
 pub struct NodeRenderInfo {
@@ -11,7 +11,7 @@ impl NodeRenderInfo {
     }
 
     pub fn screen_rect(&self, canvas_state: &CanvasStateResource) -> egui::Rect {
-        canvas_state.read_canvas_state(|canvas_state| canvas_state.to_screen_rect(self.canvas_rect))
+        canvas_state.read_resource(|canvas_state| canvas_state.to_screen_rect(self.canvas_rect))
     }
 }
 
