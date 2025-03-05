@@ -1,87 +1,131 @@
-# eframe template
+# Cognitheon
 
-[![dependency status](https://deps.rs/repo/github/emilk/eframe_template/status.svg)](https://deps.rs/repo/github/emilk/eframe_template)
-[![Build Status](https://github.com/emilk/eframe_template/workflows/CI/badge.svg)](https://github.com/emilk/eframe_template/actions?workflow=CI)
+A modern, interactive graph editor built with Rust and the egui framework, featuring GPU-accelerated particle effects and a flexible canvas system.
 
-This is a template repo for [eframe](https://github.com/emilk/egui/tree/master/crates/eframe), a framework for writing apps using [egui](https://github.com/emilk/egui/).
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-The goal is for this to be the simplest way to get started writing a GUI app in Rust.
+## Features
 
-You can compile your app natively or for the web, and share it using Github Pages.
+- **Interactive Node-Based Graph Editor**: Create, connect and manipulate nodes on a zoomable, pannable canvas.
+- **Multiple Edge Types**: Support for different connection styles including Bezier curves and straight lines.
+- **GPU-Accelerated Particle System**: Visually stunning effects rendered directly on the GPU.
+- **Serialization Support**: Save and load your graph structures.
+- **Multi-select and Manipulation**: Select multiple nodes and modify them simultaneously.
+- **Customizable Appearance**: Adjust colors, node styles, and edge appearances.
 
-## Getting started
+## Architecture
 
-Start by clicking "Use this template" at https://github.com/emilk/eframe_template/ or follow [these instructions](https://docs.github.com/en/free-pro-team@latest/github/creating-cloning-and-archiving-repositories/creating-a-repository-from-a-template).
+Cognitheon is built using a modular architecture with the following components:
 
-Change the name of the crate: Choose a good name for your project, and change the name to it in:
-* `Cargo.toml`
-    * Change the `package.name` from `eframe_template` to `your_crate`.
-    * Change the `package.authors`
-* `main.rs`
-    * Change `eframe_template::TemplateApp` to `your_crate::TemplateApp`
-* `index.html`
-    * Change the `<title>eframe template</title>` to `<title>your_crate</title>`. optional.
-* `assets/sw.js`
-  * Change the `'./eframe_template.js'` to `./your_crate.js` (in `filesToCache` array)
-  * Change the `'./eframe_template_bg.wasm'` to `./your_crate_bg.wasm` (in `filesToCache` array)
+- **Core Graph Model**: Implemented with the petgraph library, providing a solid foundation for graph operations.
+- **Canvas System**: Handles coordinate transformations between screen and canvas space, allowing for infinite zooming and panning.
+- **Input Management**: A state-based input handling system that manages different interaction modes.
+- **Rendering System**: Built on top of egui and wgpu for efficient 2D rendering and GPU-accelerated effects.
+- **Resource Management**: Thread-safe shared resources using Arc and RwLock for state management.
 
-Alternatively, you can run `fill_template.sh` which will ask for the needed names and email and perform the above patches for you. This is particularly useful if you clone this repository outside GitHub and hence cannot make use of its
-templating function.
+## Getting Started
 
-### Learning about egui
+### Prerequisites
 
-`src/app.rs` contains a simple example app. This is just to give some inspiration - most of it can be removed if you like.
+- Latest stable Rust toolchain
+- Graphics drivers that support wgpu (most modern systems are compatible)
 
-The official egui docs are at <https://docs.rs/egui>. If you prefer watching a video introduction, check out <https://www.youtube.com/watch?v=NtUkr_z7l84>. For inspiration, check out the [the egui web demo](https://emilk.github.io/egui/index.html) and follow the links in it to its source code.
+### Installation
 
-### Testing locally
+1. Clone the repository:
+   ```
+   git clone https://github.com/yourusername/cognitheon.git
+   cd cognitheon
+   ```
 
-Make sure you are using the latest version of stable rust by running `rustup update`.
+2. Build and run the application:
+   ```
+   cargo run --release
+   ```
 
-`cargo run --release`
+## Usage
 
-On Linux you need to first run:
+### Basic Operations
 
-`sudo apt-get install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev`
+- **Create Nodes**: Right-click on empty canvas space
+- **Connect Nodes**: Drag from one node to another
+- **Delete Elements**: Select and press Delete
+- **Select Multiple**: Drag selection rectangle or Ctrl+Click
+- **Pan Canvas**: Middle mouse button or Alt+Left drag
+- **Zoom**: Mouse wheel
 
-On Fedora Rawhide you need to run:
+### File Operations
 
-`dnf install clang clang-devel clang-tools-extra libxkbcommon-devel pkg-config openssl-devel libxcb-devel gtk3-devel atk fontconfig-devel`
+- **New Project**: File > New
+- **Save Project**: File > Save
+- **Load Project**: File > Open
 
-### Web Locally
+### Edge Types
 
-You can compile your app to [WASM](https://en.wikipedia.org/wiki/WebAssembly) and publish it as a web page.
+Switch between different edge types through the Edge Type dropdown in the UI panel:
+- Bezier curves: Smooth, adjustable paths with control points
+- Straight lines: Direct connections between nodes
 
-We use [Trunk](https://trunkrs.dev/) to build for web target.
-1. Install the required target with `rustup target add wasm32-unknown-unknown`.
-2. Install Trunk with `cargo install --locked trunk`.
-3. Run `trunk serve` to build and serve on `http://127.0.0.1:8080`. Trunk will rebuild automatically if you edit the project.
-4. Open `http://127.0.0.1:8080/index.html#dev` in a browser. See the warning below.
+## Web Deployment
 
-> `assets/sw.js` script will try to cache our app, and loads the cached version when it cannot connect to server allowing your app to work offline (like PWA).
-> appending `#dev` to `index.html` will skip this caching, allowing us to load the latest builds during development.
+Cognitheon can be compiled to WebAssembly and deployed as a web application:
 
-### Web Deploy
-1. Just run `trunk build --release`.
-2. It will generate a `dist` directory as a "static html" website
-3. Upload the `dist` directory to any of the numerous free hosting websites including [GitHub Pages](https://docs.github.com/en/free-pro-team@latest/github/working-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site).
-4. we already provide a workflow that auto-deploys our app to GitHub pages if you enable it.
-> To enable Github Pages, you need to go to Repository -> Settings -> Pages -> Source -> set to `gh-pages` branch and `/` (root).
->
-> If `gh-pages` is not available in `Source`, just create and push a branch called `gh-pages` and it should be available.
->
-> If you renamed the `main` branch to something else (say you re-initialized the repository with `master` as the initial branch), be sure to edit the github workflows `.github/workflows/pages.yml` file to reflect the change
-> ```yml
-> on:
->   push:
->     branches:
->       - <branch name>
-> ```
+1. Install the WASM target:
+   ```
+   rustup target add wasm32-unknown-unknown
+   ```
 
-You can test the template app at <https://emilk.github.io/eframe_template/>.
+2. Install Trunk:
+   ```
+   cargo install --locked trunk
+   ```
 
-## Updating egui
+3. Build for web:
+   ```
+   trunk build --release
+   ```
 
-As of 2023, egui is in active development with frequent releases with breaking changes. [eframe_template](https://github.com/emilk/eframe_template/) will be updated in lock-step to always use the latest version of egui.
+4. The generated `dist` directory can be deployed to any static web hosting service.
 
-When updating `egui` and `eframe` it is recommended you do so one version at the time, and read about the changes in [the egui changelog](https://github.com/emilk/egui/blob/master/CHANGELOG.md) and [eframe changelog](https://github.com/emilk/egui/blob/master/crates/eframe/CHANGELOG.md).
+## Development
+
+### Project Structure
+
+- `src/app.rs`: Main application structure and UI layout
+- `src/graph/`: Graph data structures and operations
+- `src/canvas.rs`: Canvas system for coordinate management
+- `src/ui/`: UI components and rendering
+- `src/input/`: Input handling and state management
+- `src/gpu_render/`: GPU-accelerated rendering components
+
+### Building with Debugging
+
+```
+cargo run
+```
+
+## Contributing
+
+We welcome contributions to Cognitheon! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+This project is dual-licensed under either:
+
+- MIT License ([LICENSE-MIT](LICENSE-MIT))
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+at your option.
+
+## Acknowledgments
+
+- Built on [egui](https://github.com/emilk/egui) and [eframe](https://github.com/emilk/egui/tree/master/crates/eframe)
+- Graph algorithms powered by [petgraph](https://github.com/petgraph/petgraph)
+- GPU rendering with [wgpu](https://github.com/gfx-rs/wgpu)
