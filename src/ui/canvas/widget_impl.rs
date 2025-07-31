@@ -36,19 +36,19 @@ impl Widget for &mut CanvasWidget {
         );
         // });
 
-        let offset: f32 = ui
-            .data(|d| d.get_temp(Id::new("animation_offset")))
-            .unwrap_or(0.0);
+        // let offset: f32 = ui
+        //     .data(|d| d.get_temp(Id::new("animation_offset")))
+        //     .unwrap_or(0.0);
 
-        draw_dashed_line_with_offset(
-            ui.painter(),
-            Pos2::new(100.0, 100.0),
-            Pos2::new(300.0, 100.0),
-            Stroke::new(2.0, Color32::ORANGE),
-            10.0,
-            5.0,
-            offset,
-        );
+        // draw_dashed_line_with_offset(
+        //     ui.painter(),
+        //     Pos2::new(100.0, 100.0),
+        //     Pos2::new(300.0, 100.0),
+        //     Stroke::new(2.0, Color32::ORANGE),
+        //     10.0,
+        //     5.0,
+        //     offset,
+        // );
 
         // self.update_selected_nodes();
         // self.draw_particle_system(ui, screen_rect);

@@ -15,6 +15,10 @@ pub struct ParticleSystem {
     pub spawn_per_frame: u32,
     /// 粒子的最大存活时间
     pub max_life: f32,
+    /// 是否正在生成新的粒子
+    pub generating_new_particles: bool,
+    /// 是否还有活跃的粒子
+    pub has_active_particles: bool,
 
     /// 下面是 GPU 相关的资源
     /// 用来存储粒子数据的缓冲（Storage Buffer）
@@ -162,6 +166,8 @@ impl ParticleSystem {
             bind_group,
             render_pipeline,
             max_vel,
+            generating_new_particles: false,
+            has_active_particles: false,
         }
     }
 

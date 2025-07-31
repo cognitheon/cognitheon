@@ -142,31 +142,32 @@ pub fn draw_grid(ui: &mut egui::Ui, canvas_state: &CanvasState, screen_rect: egu
     }
 
     // 画坐标轴
-    let axis_color = egui::Color32::RED;
+    let axis_color_x = egui::Color32::RED;
+    let axis_color_y = egui::Color32::GREEN;
     let origin = canvas_state.to_screen(egui::Pos2::ZERO);
     let x_axis_end = canvas_state.to_screen(egui::Pos2::new(1000.0, 0.0));
     let y_axis_end = canvas_state.to_screen(egui::Pos2::new(0.0, 1000.0));
-    painter.line_segment([origin, x_axis_end], (2.0, axis_color));
-    painter.line_segment([origin, y_axis_end], (2.0, axis_color));
+    painter.line_segment([origin, x_axis_end], (2.0, axis_color_x));
+    painter.line_segment([origin, y_axis_end], (2.0, axis_color_y));
 
-    // 画一条线
-    let line_start = canvas_state.to_screen(egui::Pos2::new(0.0, 0.0));
-    let line_end = canvas_state.to_screen(egui::Pos2::new(1000.0, 1000.0));
-    painter.line_segment([line_start, line_end], (2.0, egui::Color32::GREEN));
+    // // 画一条线
+    // let line_start = canvas_state.to_screen(egui::Pos2::new(0.0, 0.0));
+    // let line_end = canvas_state.to_screen(egui::Pos2::new(1000.0, 1000.0));
+    // painter.line_segment([line_start, line_end], (2.0, egui::Color32::GREEN));
 
-    // 画一个矩形
-    let rect = egui::Rect::from_min_max(
-        egui::Pos2::new(-500.0, -500.0),
-        egui::Pos2::new(-150.0, -150.0),
-    );
-    let rect = canvas_state.to_screen_rect(rect);
-    painter.rect(
-        rect,
-        egui::CornerRadius::same(5),
-        egui::Color32::BLUE,
-        egui::Stroke::new(2.0, egui::Color32::GREEN),
-        egui::StrokeKind::Outside,
-    );
+    // // 画一个矩形
+    // let rect = egui::Rect::from_min_max(
+    //     egui::Pos2::new(-500.0, -500.0),
+    //     egui::Pos2::new(-150.0, -150.0),
+    // );
+    // let rect = canvas_state.to_screen_rect(rect);
+    // painter.rect(
+    //     rect,
+    //     egui::CornerRadius::same(5),
+    //     egui::Color32::BLUE,
+    //     egui::Stroke::new(2.0, egui::Color32::GREEN),
+    //     egui::StrokeKind::Outside,
+    // );
 
     // 画一个圆
     // let circle_center = canvas_state.to_screen(egui::Pos2::new(500.0, 500.0));

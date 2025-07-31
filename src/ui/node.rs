@@ -424,7 +424,7 @@ impl Widget for NodeWidget {
             }
 
             // 在右上角绘制节点ID
-            self.draw_node_id(ui, &response);
+            // self.draw_node_id(ui, &response);
 
             let canvas_rect = self
                 .canvas_state_resource
