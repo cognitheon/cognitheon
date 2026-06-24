@@ -162,16 +162,21 @@ impl InputStateManager {
     }
 
     /// 每帧更新输入状态
-    pub fn update(&mut self, ui: &mut egui::Ui, _response: &egui::Response) {
+    pub fn update(&mut self, ui: &mut egui::Ui, canvas_response: &egui::Response) {
         // 更新上下文
         self.context.update(ui);
+
+        // 区域门控：指针是否落在 canvas 区域内（其它面板如右侧链接面板在外）。
+        // 用 canvas 的 drag response 判定——节点卡片在 canvas rect 内、`contains_pointer()`
+        // 仍为 true，故节点点击/拖拽不受影响；只排除 canvas rect 外（右侧面板等）的事件。
+        let pointer_in_canvas = canvas_response.contains_pointer();
 
         // 处理输入事件，获取当前输入目标
         let target = self.determine_target(ui);
         self.last_target = Some(target.clone());
 
         // 首先处理一次性事件，这些可能导致状态转换
-        self.handle_one_shot_events(ui, &target);
+        self.handle_one_shot_events(ui, &target, pointer_in_canvas);
 
         // 然后根据当前状态处理持续性事件
         self.handle_continuous_events(ui, &target);
@@ -181,17 +186,27 @@ impl InputStateManager {
     }
 
     /// 处理可能触发状态转换的一次性事件
-    fn handle_one_shot_events(&mut self, ui: &mut egui::Ui, target: &InputTarget) {
-        // 检查鼠标点击
-        if ui.input(|i| i.pointer.button_pressed(PointerButton::Primary)) {
+    ///
+    /// `pointer_in_canvas`：指针是否落在 canvas 区域内。**进入**新交互态的 press / double-click
+    /// 必须发生在 canvas 内，否则（如点右侧面板）不分发，避免误清选中、误入框选。
+    /// release 与键盘事件不门控——拖拽中把指针移出 canvas 再释放，仍须正常 finalize 收尾，
+    /// 不得让状态机泄漏在 Dragging/Selecting。
+    fn handle_one_shot_events(
+        &mut self,
+        ui: &mut egui::Ui,
+        target: &InputTarget,
+        pointer_in_canvas: bool,
+    ) {
+        // 检查鼠标点击（进入交互态，须落在 canvas 内）
+        if pointer_in_canvas && ui.input(|i| i.pointer.button_pressed(PointerButton::Primary)) {
             self.handle_primary_button_press(ui, target);
         }
 
-        if ui.input(|i| i.pointer.button_pressed(PointerButton::Secondary)) {
+        if pointer_in_canvas && ui.input(|i| i.pointer.button_pressed(PointerButton::Secondary)) {
             self.handle_secondary_button_press(ui, target);
         }
 
-        // 检查鼠标释放
+        // 检查鼠标释放（收尾，不门控——拖拽出界释放也要正常结束）
         if ui.input(|i| i.pointer.button_released(PointerButton::Primary)) {
             self.handle_primary_button_release(ui, target);
         }
@@ -216,8 +231,10 @@ impl InputStateManager {
             self.handle_delete_key();
         }
 
-        // 检查双击
-        if ui.input(|i| i.pointer.button_double_clicked(PointerButton::Primary)) {
+        // 检查双击（进入编辑/建点，须落在 canvas 内）
+        if pointer_in_canvas
+            && ui.input(|i| i.pointer.button_double_clicked(PointerButton::Primary))
+        {
             self.handle_double_click(ui, target);
         }
     }

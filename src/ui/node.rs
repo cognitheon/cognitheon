@@ -315,11 +315,12 @@ impl Widget for NodeWidget {
             .read_resource(|c| c.to_screen(position));
 
         let theme = ui.ctx().theme();
-        let border = if selected {
-            node_border_selected(theme)
-        } else {
-            node_border(theme)
-        };
+
+        // 卡片边框：Frame 的 stroke 固定为常量 1.0（color = 未选中态边框色），使内容区
+        // geometry 在选中/未选中时一致——egui Frame 的描边是 StrokeKind::Inside 且 widget_rect
+        // 随 stroke.width 增长，若选中时加粗会挤占内容、引发布局颤动。选中态改为在卡片 rect
+        // 外侧另画一圈更粗的边框（见下方 rect_stroke + StrokeKind::Outside），不侵占内容。
+        let base_border = node_border(theme);
 
         // 在节点屏幕位置分配一个子 UI 渲染卡片（内容决定高度）
         let builder = egui::UiBuilder::new()
@@ -331,7 +332,7 @@ impl Widget for NodeWidget {
         let card = ui.scope_builder(builder, |ui| {
             egui::Frame::default()
                 .fill(node_background(theme))
-                .stroke(Stroke::new(if selected { 2.0 } else { 1.0 }, border))
+                .stroke(Stroke::new(1.0, base_border))
                 .corner_radius(6)
                 .inner_margin(egui::Margin::same(8))
                 .show(ui, |ui| {
@@ -362,6 +363,17 @@ impl Widget for NodeWidget {
         });
 
         let rect = card.inner;
+
+        // 选中态：在卡片 rect 外侧补画一圈更粗的边框（StrokeKind::Outside，向外扩展，
+        // 不侵占内容、不改变布局 geometry → 无颤动）。corner_radius 与 Frame 的 6 对齐。
+        if selected {
+            ui.painter().rect_stroke(
+                rect,
+                6.0,
+                Stroke::new(2.0, node_border_selected(theme)),
+                egui::StrokeKind::Outside,
+            );
+        }
 
         // 读模式才在整张卡片上接管点击/拖拽（编辑模式让内部 TextEdit 处理输入）
         let response = if editing {
