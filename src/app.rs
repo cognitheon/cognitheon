@@ -12,6 +12,7 @@ use crate::gpu_render::particle::particle_system::ParticleSystem;
 use crate::graph::edge::EdgeType;
 use crate::input::state_manager::InputStateManager;
 use crate::ui::canvas::data::CanvasWidget;
+use crate::wikilink;
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
@@ -127,6 +128,101 @@ impl CognitheonApp {
     //         &app.graph
     //     })
     // }
+}
+
+impl CognitheonApp {
+    /// 右侧链接面板：选中节点的出链 + 反向引用（含上下文原话），点击跳转聚焦。
+    fn show_links_panel(&self, ui: &mut egui::Ui) {
+        ui.add_space(4.0);
+        ui.heading("链接");
+        ui.separator();
+
+        let selected = self
+            .graph_resource
+            .read_resource(|g| g.get_selected_nodes().first().copied());
+        let Some(idx) = selected else {
+            ui.weak("选中一个节点，查看它的出链与反向引用。");
+            return;
+        };
+
+        let (title, outlinks) = self.graph_resource.read_resource(|g| match g.get_node(idx) {
+            Some(n) => (n.text.clone(), wikilink::parse_links(&n.note)),
+            None => (String::new(), Vec::new()),
+        });
+        let title_disp = if title.is_empty() {
+            "（无标题）"
+        } else {
+            title.as_str()
+        };
+        ui.label(RichText::new(title_disp).strong());
+
+        // 出链
+        ui.add_space(6.0);
+        ui.label(RichText::new("出链").weak().small());
+        if outlinks.is_empty() {
+            ui.weak("（在正文里用 [[标题]] 建立）");
+        }
+        for lt in &outlinks {
+            let target = self
+                .graph_resource
+                .read_resource(|g| wikilink::find_by_title(g, lt));
+            let text = if target.is_some() {
+                format!("→ {lt}")
+            } else {
+                format!("→ {lt}（未创建）")
+            };
+            if ui
+                .add_enabled(target.is_some(), egui::Button::new(text).frame(false))
+                .clicked()
+            {
+                if let Some(t) = target {
+                    self.focus_node(ui.ctx(), t);
+                }
+            }
+        }
+
+        // 反向链接 + 上下文原话
+        ui.add_space(8.0);
+        ui.separator();
+        ui.label(RichText::new("反向链接").weak().small());
+        let backlinks = self
+            .graph_resource
+            .read_resource(|g| wikilink::backlinks_with_context(g, idx));
+        if backlinks.is_empty() {
+            ui.weak("（还没有笔记用 [[…]] 提到它）");
+        }
+        for bl in &backlinks {
+            if ui
+                .add(
+                    egui::Button::new(RichText::new(format!("↩ {}", bl.title)).strong())
+                        .frame(false),
+                )
+                .clicked()
+            {
+                self.focus_node(ui.ctx(), bl.source);
+            }
+            for c in &bl.contexts {
+                ui.label(RichText::new(c.as_str()).weak().small());
+            }
+            ui.add_space(4.0);
+        }
+    }
+
+    /// 选中并把画布聚焦（居中）到某节点。
+    fn focus_node(&self, ctx: &egui::Context, idx: petgraph::graph::NodeIndex) {
+        let pos = self.graph_resource.with_resource(|g| {
+            g.selected.clear();
+            g.select_node(idx);
+            g.get_node(idx).map(|n| n.position)
+        });
+        if let Some(pos) = pos {
+            let center = ctx.content_rect().center();
+            self.canvas_resource.with_resource(|cs| {
+                let s = cs.transform.scaling;
+                cs.transform.translation = center.to_vec2() - s * pos.to_vec2();
+            });
+        }
+    }
 }
 
 impl eframe::App for CognitheonApp {
@@ -315,6 +411,13 @@ impl eframe::App for CognitheonApp {
                 );
             });
         });
+
+        // 右侧链接面板：选中节点的出链 + 反向引用（含上下文原话），点击跳转聚焦
+        egui::Panel::right("links_panel")
+            .default_size(260.0)
+            .show_inside(ui, |ui| {
+                self.show_links_panel(ui);
+            });
 
         egui::CentralPanel::default()
             // .frame(egui::Frame::default().outer_margin(egui::Margin::same(3.0)))

@@ -115,6 +115,47 @@ pub fn resolve_links(
     outcome
 }
 
+/// 一条反向链接：源节点 + 其正文里提及本节点（`[[标题]]`）的上下文行。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Backlink {
+    pub source: NodeIndex,
+    pub title: String,
+    /// 源节点正文里包含 `[[target 标题]]` 的那些行（已 trim）。
+    pub contexts: Vec<String>,
+}
+
+/// 基于正文文本的反向链接（"被谁引用 + 原话"）——PKM "linked references" 的数据源。
+///
+/// 找出所有正文里出现 `[[target 的标题]]` 的节点，并附上包含该链接的上下文行。
+/// 以**当前标题**匹配（target 改名后旧链接不再命中，与 Obsidian 一致）；空标题节点无反链。
+pub fn backlinks_with_context(graph: &Graph, target: NodeIndex) -> Vec<Backlink> {
+    let target_title = match graph.get_node(target) {
+        Some(n) if !n.text.is_empty() => n.text.clone(),
+        _ => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for src_idx in graph.graph.node_indices() {
+        if src_idx == target {
+            continue;
+        }
+        let src = &graph.graph[src_idx];
+        let contexts: Vec<String> = src
+            .note
+            .lines()
+            .filter(|line| parse_links(line).iter().any(|t| t == &target_title))
+            .map(|line| line.trim().to_owned())
+            .collect();
+        if !contexts.is_empty() {
+            out.push(Backlink {
+                source: src_idx,
+                title: src.text.clone(),
+                contexts,
+            });
+        }
+    }
+    out
+}
+
 /// 反向链接：所有有边指向 `target` 的节点（incoming）。
 pub fn backlinks(graph: &Graph, target: NodeIndex) -> Vec<NodeIndex> {
     let mut seen = Vec::new();
@@ -237,6 +278,28 @@ mod tests {
         resolve_links(&mut g, &canvas, a);
         assert_eq!(backlinks(&g, b), vec![a], "B 的反向链接应是 A");
         assert!(backlinks(&g, a).is_empty());
+    }
+
+    #[test]
+    fn backlinks_with_context_returns_source_and_lines() {
+        let (mut g, canvas) = graph_with(&["目标"]);
+        let target = find_by_title(&g, "目标").unwrap();
+        let id = canvas.read_resource(|c| c.new_node_id());
+        let src = g.add_node(Node {
+            id,
+            position: egui::pos2(0.0, 0.0),
+            text: "源笔记".to_owned(),
+            note: "无关的一行\n这里提到 [[目标]]，很重要\n又一行写了 [[目标]] 再次".to_owned(),
+        });
+
+        let bls = backlinks_with_context(&g, target);
+        assert_eq!(bls.len(), 1, "应有一个来源");
+        assert_eq!(bls[0].source, src);
+        assert_eq!(bls[0].title, "源笔记");
+        assert_eq!(bls[0].contexts.len(), 2, "两行都提到了 [[目标]]");
+        assert!(bls[0].contexts[0].contains("很重要"));
+        // 空标题节点无反链；自身不计入
+        assert!(backlinks_with_context(&g, src).is_empty());
     }
 
     #[test]

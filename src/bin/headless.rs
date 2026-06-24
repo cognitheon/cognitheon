@@ -18,7 +18,8 @@
 //!   load <path>                 从文件加载（兼容旧 .cnt），返回 `ok nodes <n> edges <m>`
 //!   link <i> <j>                建一条 i->j 的裸边（不防自环/重复，区别于 parse 的双链）
 //!   parse <i>                   解析节点 i 正文里的 [[标题]]，自动建/连节点（双链）
-//!   backlinks <i>               列出指向节点 i 的反向链接
+//!   backlinks <i>               列出指向节点 i 的反向链接（基于边）
+//!   refs <i>                    反向引用 + 上下文原话（基于正文 [[标题]] 文本）
 //!   search <query>              全文搜索（标题/正文）
 //!   find <title>                按精确标题找节点，返回 `node <index>`
 //!   reset                       清空
@@ -255,6 +256,23 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
                 .map(|b| format!("backlink {} {}", b.index(), escape(&s.graph.graph[*b].text)))
                 .collect();
             lines.push(format!("ok count {}", bs.len()));
+            Ok(Some(lines))
+        }
+
+        "refs" => {
+            let idx = parse_index(rest)?;
+            if s.graph.get_node(idx).is_none() {
+                return Err("no such node".into());
+            }
+            let bls = wikilink::backlinks_with_context(&s.graph, idx);
+            let mut lines = Vec::new();
+            for bl in &bls {
+                lines.push(format!("ref {} {}", bl.source.index(), escape(&bl.title)));
+                for ctx in &bl.contexts {
+                    lines.push(format!("  ctx {}", escape(ctx)));
+                }
+            }
+            lines.push(format!("ok count {}", bls.len()));
             Ok(Some(lines))
         }
 
