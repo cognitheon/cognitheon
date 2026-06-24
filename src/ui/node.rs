@@ -4,10 +4,18 @@ use crate::graph::node_observer::NodeObserver;
 use crate::graph::render_info::NodeRenderInfo;
 use crate::graph::selection::GraphSelection;
 use crate::resource::{CanvasStateResource, GraphResource};
+use crate::wikilink;
 use egui::{Id, Sense, Stroke, Widget};
+use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use petgraph::graph::NodeIndex;
 
 use crate::colors::{node_background, node_border, node_border_selected};
+
+thread_local! {
+    /// 复用的 Markdown 渲染缓存（egui 单线程；避免每帧每节点重建）。
+    static MARKDOWN_CACHE: std::cell::RefCell<CommonMarkCache> =
+        std::cell::RefCell::new(CommonMarkCache::default());
+}
 
 pub struct NodeWidget {
     pub node_index: NodeIndex,
@@ -52,7 +60,7 @@ impl NodeWidget {
         // self.handle_secondary_drag(ui, response);
 
         if response.double_clicked() {
-            println!("node double clicked: {:?}", self.node_index);
+            log::debug!("node double clicked: {:?}", self.node_index);
             self.graph_resource.with_resource(|graph| {
                 graph.set_editing_node(Some(self.node_index));
             });
@@ -62,7 +70,7 @@ impl NodeWidget {
         if response.clicked()
             && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
         {
-            println!("node clicked: {:?}", self.node_index);
+            log::debug!("node clicked: {:?}", self.node_index);
             self.graph_resource.with_resource(|graph| {
                 if graph.get_editing_node() != Some(self.node_index) {
                     graph.set_editing_node(None);
@@ -84,7 +92,7 @@ impl NodeWidget {
             self.graph_resource.with_resource(|graph| {
                 if let GraphSelection::Node(selected_nodes) = &graph.selected {
                     if selected_nodes.contains(&self.node_index) && graph.editing_node.is_none() {
-                        println!("node deleted: {:?}", self.node_index);
+                        log::debug!("node deleted: {:?}", self.node_index);
                         graph.remove_node(self.node_index);
                     }
                 }
@@ -99,7 +107,7 @@ impl NodeWidget {
             .read_resource(|graph| graph.get_editing_node())
             == Some(self.node_index)
         {
-            println!("node enter: {:?}", self.node_index);
+            log::debug!("node enter: {:?}", self.node_index);
             self.graph_resource.with_resource(|graph| {
                 graph.set_editing_node(None);
             });
@@ -269,184 +277,149 @@ impl NodeWidget {
     // }
 }
 
+/// 卡片固定像素宽（v1：内容不随画布缩放缩放，保证 Markdown / 中文始终可读）。
+const CARD_WIDTH: f32 = 240.0;
+/// 正文区最大高度，超出滚动。
+const BODY_MAX_HEIGHT: f32 = 160.0;
+
 impl Widget for NodeWidget {
     fn ui(mut self, ui: &mut egui::Ui) -> egui::Response {
-        // 对缩放比例进行区间化
-        // 对缩放比例进行区间化
-        // let scale_level = (self
-        //     .canvas_state_resource
-        //     .read_resource(|canvas_state| canvas_state.transform.scaling)
-        //     * 10.0)
-        //     .ceil()
-        //     / 10.0;
-
-        let scale_level = self
-            .canvas_state_resource
-            .read_resource(|canvas_state| canvas_state.transform.scaling);
-        // let node = self.graph.get_node_mut(self.node_id).unwrap();
-
-        let text = {
-            self.graph_resource.with_resource(|graph| {
-                let node = graph.get_node(self.node_index).unwrap();
-                node.text.to_string()
-            })
-        };
-        let font_size = 20.0 * scale_level; // 你可以调整这个数值
-                                            // let font_size = 20.0;
-        let font = egui::FontId::new(font_size, egui::FontFamily::Proportional);
-
-        let galley = ui
-            .painter()
-            .layout_no_wrap(text.clone(), font.clone(), egui::Color32::RED);
-        let text_size = galley.size();
-        // let text_size = egui::Vec2::new(100.0, 100.0);
-
-        let min_width = 60.0 * scale_level;
-        // let min_height = 40.0 * self.canvas_state.scale;
-
-        let desired_size = egui::vec2(
-            (text_size.x + 20.0 * scale_level).max(min_width),
-            text_size.y + 10.0 * scale_level,
+        // 读取节点数据与状态
+        let (title, body, position) = self.graph_resource.read_resource(|graph| {
+            let n = graph.get_node(self.node_index).unwrap();
+            (n.text.clone(), n.note.clone(), n.position)
+        });
+        let editing =
+            self.graph_resource.read_resource(|g| g.get_editing_node()) == Some(self.node_index);
+        let selected = self.graph_resource.read_resource(
+            |g| matches!(&g.selected, GraphSelection::Node(ns) if ns.contains(&self.node_index)),
         );
 
-        let screen_pos = {
-            self.graph_resource.with_resource(|graph| {
-                let node = graph.get_node(self.node_index).unwrap();
-                self.canvas_state_resource
-                    .read_resource(|canvas_state| canvas_state.to_screen(node.position))
-            })
+        let screen_pos = self
+            .canvas_state_resource
+            .read_resource(|c| c.to_screen(position));
+
+        let theme = ui.ctx().theme();
+        let border = if selected {
+            node_border_selected(theme)
+        } else {
+            node_border(theme)
         };
 
-        let rect = egui::Rect::from_min_size(screen_pos, desired_size);
+        // 在节点屏幕位置分配一个子 UI 渲染卡片（内容决定高度）
+        let builder = egui::UiBuilder::new()
+            .max_rect(egui::Rect::from_min_size(
+                screen_pos,
+                egui::vec2(CARD_WIDTH, 100_000.0),
+            ))
+            .layout(egui::Layout::top_down(egui::Align::Min));
+        let card = ui.scope_builder(builder, |ui| {
+            egui::Frame::default()
+                .fill(node_background(theme))
+                .stroke(Stroke::new(if selected { 2.0 } else { 1.0 }, border))
+                .corner_radius(6)
+                .inner_margin(egui::Margin::same(8))
+                .show(ui, |ui| {
+                    ui.set_width(CARD_WIDTH - 16.0);
+                    if editing {
+                        self.show_editor(ui, &title, &body);
+                    } else {
+                        if title.is_empty() {
+                            ui.weak("（无标题）");
+                        } else {
+                            ui.label(egui::RichText::new(&title).strong().size(16.0));
+                        }
+                        if !body.is_empty() {
+                            ui.separator();
+                            egui::ScrollArea::vertical()
+                                .max_height(BODY_MAX_HEIGHT)
+                                .auto_shrink([false, true])
+                                .show(ui, |ui| {
+                                    MARKDOWN_CACHE.with_borrow_mut(|cache| {
+                                        CommonMarkViewer::new().show(ui, cache, &body);
+                                    });
+                                });
+                        }
+                    }
+                })
+                .response
+                .rect
+        });
 
-        let response = ui.allocate_rect(rect, Sense::click_and_drag());
+        let rect = card.inner;
 
-        self.setup_actions(&response, ui);
-
-        let selected_rect = rect.expand(5.0 * scale_level);
-        if ui.is_rect_visible(rect) {
-            let painter = ui.painter();
-
-            // 绘制包围矩形
-            painter.rect(
+        // 读模式才在整张卡片上接管点击/拖拽（编辑模式让内部 TextEdit 处理输入）
+        let response = if editing {
+            card.response
+        } else {
+            let r = ui.interact(
                 rect,
-                egui::CornerRadius::same(5),
-                egui::Color32::TRANSPARENT,
-                Stroke::new(1.0, egui::Color32::ORANGE),
-                egui::StrokeKind::Outside,
+                ui.id().with(("node", self.node_index)),
+                Sense::click_and_drag(),
             );
-
-            // let (response, painter) = ui.allocate_painter(desired_size, Sense::click_and_drag());
-            // println!("screen_pos: {:?}", screen_pos);
-            // 根据文本大小创建矩形区域
-
-            // let stroke_width = 3.0 * canvas_state.scale;
-            let stroke_width = 1.0;
-
-            if self.graph_resource.read_resource(|graph| {
-                if let GraphSelection::Node(selected_nodes) = &graph.selected {
-                    selected_nodes.contains(&self.node_index)
-                } else {
-                    false
-                }
-            }) {
-                painter.rect(
-                    selected_rect,
-                    egui::CornerRadius::same(5),
-                    egui::Color32::TRANSPARENT,
-                    egui::Stroke::new(2.0, node_border_selected(ui.ctx().theme())), // 将线宽从20.0改为1.0
-                    egui::StrokeKind::Outside,
-                );
-            }
-            // 绘制边框
-            painter.rect(
-                rect,
-                egui::CornerRadius::same(5),
-                node_background(ui.ctx().theme()),
-                egui::Stroke::new(stroke_width, node_border(ui.ctx().theme())), // 将线宽从20.0改为1.0
-                egui::StrokeKind::Outside,
-            );
-
-            // 根据rect计算文本位置，使得文本居中
-            let text_pos = rect.center();
-
-            // 当前节点正在编辑
-            if self
-                .graph_resource
-                .read_resource(|graph| graph.get_editing_node())
-                == Some(self.node_index)
-            {
-                let mut text = {
-                    self.graph_resource.with_resource(|graph| {
-                        let node = graph.get_node(self.node_index).unwrap();
-                        node.text.to_string()
-                    })
-                };
-                // let mut response = ui.text_edit_singleline(&mut text);
-                let edit_response = ui.put(
-                    rect,
-                    egui::TextEdit::multiline(&mut text)
-                        // .min_size(egui::vec2(min_width, min_height))
-                        .desired_rows(1)
-                        // .min_size(egui::vec2(min_width, 2.0))
-                        .font(font)
-                        .text_color(egui::Color32::RED)
-                        .background_color(node_background(ui.ctx().theme()))
-                        // .margin(
-                        //     egui::vec2(10.0, 0.0)
-                        //         * canvas_state_resource
-                        //             .read_resource(|canvas_state| canvas_state.scale),
-                        // )
-                        .horizontal_align(egui::Align::Center)
-                        .vertical_align(egui::Align::Center),
-                );
-
-                // if edit_response.lost_focus() {
-                //     graph_resource.with_resource(|graph| {
-                //         graph.set_editing_node(None);
-                //     });
-                // }
-
-                edit_response.request_focus();
-                self.graph_resource.with_resource(|graph| {
-                    let node = graph.get_node_mut(self.node_index).unwrap();
-                    node.text = text;
-                });
-            } else {
-                // 绘制文本
-                painter.text(
-                    text_pos,
-                    egui::Align2::CENTER_CENTER,
-                    text,
-                    font.clone(),
-                    egui::Color32::RED,
-                );
-            }
-
-            // 在右上角绘制节点ID
-            // self.draw_node_id(ui, &response);
-
-            let canvas_rect = self
-                .canvas_state_resource
-                .read_resource(|canvas_state| canvas_state.to_canvas_rect(rect));
-            let render_info = NodeRenderInfo { canvas_rect };
-
-            self.observers.iter().for_each(|observer| {
-                observer.on_node_changed(self.node_index, render_info);
-            });
-            // ui.ctx().data_mut(|d| {
-            //     d.insert_temp(Id::new(self.node_index.index().to_string()), render_info)
-            // });
-            // self.graph_resource.with_resource(|graph| {
-            //     let node = graph.get_node_mut(self.node_index).unwrap();
-            //     node.render_info = Some(render_info);
-            // });
+            self.setup_actions(&r, ui);
+            r
         };
+
+        // 发布几何（供边渲染 / 命中测试读取）
+        let canvas_rect = self
+            .canvas_state_resource
+            .read_resource(|c| c.to_canvas_rect(rect));
+        let render_info = NodeRenderInfo { canvas_rect };
+        self.observers
+            .iter()
+            .for_each(|o| o.on_node_changed(self.node_index, render_info));
 
         response
+    }
+}
 
-        // let response = ui.label("text");
-        // response
+impl NodeWidget {
+    /// 编辑态：标题单行 + 正文多行（Markdown 源）；Ctrl/Cmd+Enter 退出并解析 `[[双链]]`。
+    fn show_editor(&self, ui: &mut egui::Ui, title: &str, body: &str) {
+        let mut t = title.to_owned();
+        let tr = ui.add(
+            egui::TextEdit::singleline(&mut t)
+                .hint_text("标题")
+                .desired_width(f32::INFINITY),
+        );
+        if tr.changed() {
+            self.graph_resource.with_resource(|g| {
+                if let Some(n) = g.get_node_mut(self.node_index) {
+                    n.text = t.clone();
+                }
+            });
+        }
+
+        ui.separator();
+
+        let mut b = body.to_owned();
+        let br = egui::ScrollArea::vertical()
+            .max_height(BODY_MAX_HEIGHT)
+            .show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::multiline(&mut b)
+                        .hint_text("正文（Markdown；用 [[标题]] 建双链）")
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(4),
+                )
+            })
+            .inner;
+        if br.changed() {
+            self.graph_resource.with_resource(|g| {
+                if let Some(n) = g.get_node_mut(self.node_index) {
+                    n.note = b.clone();
+                }
+            });
+        }
+
+        // Ctrl/Cmd + Enter：退出编辑，并把正文里的 [[双链]] 落到图上
+        if ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command) {
+            self.graph_resource.with_resource(|g| {
+                g.set_editing_node(None);
+                wikilink::resolve_links(g, &self.canvas_state_resource, self.node_index);
+            });
+        }
     }
 }
 
