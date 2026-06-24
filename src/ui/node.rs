@@ -394,6 +394,12 @@ impl NodeWidget {
         ui.separator();
 
         let mut b = body.to_owned();
+        // Markdown 源码语法高亮（含 [[双链]] 高亮）
+        let md_colors = crate::ui::md_highlight::MdColors::from_visuals(ui.visuals());
+        let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+            let job = crate::ui::md_highlight::layout(buf.as_str(), 14.0, wrap_width, &md_colors);
+            ui.fonts_mut(|f| f.layout_job(job))
+        };
         let br = egui::ScrollArea::vertical()
             .max_height(BODY_MAX_HEIGHT)
             .show(ui, |ui| {
@@ -401,7 +407,8 @@ impl NodeWidget {
                     egui::TextEdit::multiline(&mut b)
                         .hint_text("正文（Markdown；用 [[标题]] 建双链）")
                         .desired_width(f32::INFINITY)
-                        .desired_rows(4),
+                        .desired_rows(4)
+                        .layouter(&mut layouter),
                 )
             })
             .inner;

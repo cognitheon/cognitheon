@@ -233,9 +233,14 @@ impl InputStateManager {
             }
         }
 
-        // 处理滚动
+        // 处理滚动：指针悬在节点卡片上时，把滚动让给卡片内部 ScrollArea，画布不平移（避免里外都滚）
         let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
-        if scroll_delta != Vec2::ZERO {
+        if scroll_delta != Vec2::ZERO
+            && self
+                .context
+                .hit_test_node(ui, self.context.current_mouse_pos)
+                .is_none()
+        {
             self.handle_scroll(scroll_delta);
         }
 
