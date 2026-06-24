@@ -107,29 +107,13 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain stable --profile default --target ${{ matrix.TARGET }} -y
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-      - name: Install cross for linux
-        if: contains(matrix.TARGET, 'linux')
-        run: |
-          cargo install cross --git https://github.com/cross-rs/cross --rev 1b8cf50d20180c1a394099e608141480f934b7f7
-          rustup target add ${{ matrix.TARGET }} --toolchain stable
+      # 三个目标均为各自 runner 的原生 target，直接用 cargo 构建（无需 cross；旧版 cross 在新工具链上已编译不过）
+      - name: Install Linux GUI build dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev libssl-dev
 
-      - name: Install cross for mac and windows
-        if: ${{ !contains(matrix.TARGET, 'linux') }}
-        run: |
-          cargo install cross
-          rustup target add ${{ matrix.TARGET }} --toolchain stable
-
-      - name: Build for Windows
-        if: matrix.os == 'windows-latest'
-        run: |
-          $env:CROSS_NO_WARNINGS=0
-          cross build --verbose --release --target=${{ matrix.TARGET }}
-        shell: pwsh
-  
-      - name: Build for macOS and Linux
-        if: matrix.os != 'windows-latest'
-        run: |
-          CROSS_NO_WARNINGS=0 cross build --verbose --release --target=${{ matrix.TARGET }}
+      - name: Build
+        run: cargo build --verbose --release --target=${{ matrix.TARGET }}
   
 
       - name: Rename
