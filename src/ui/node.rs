@@ -420,11 +420,85 @@ impl NodeWidget {
             });
         }
 
+        // [[ 自动补全：光标前是未闭合的 `[[query` 时，弹出匹配的已有标题，点击即补全
+        if br.has_focus() {
+            self.wikilink_autocomplete(ui, &br, &b);
+        }
+
         // Ctrl/Cmd + Enter：退出编辑，并把正文里的 [[双链]] 落到图上
         if ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command) {
             self.graph_resource.with_resource(|g| {
                 g.set_editing_node(None);
                 wikilink::resolve_links(g, &self.canvas_state_resource, self.node_index);
+            });
+        }
+    }
+
+    /// `[[` 自动补全：检测光标前未闭合的 `[[query`，弹出匹配的已有标题，点击补全为 `[[标题]]`。
+    fn wikilink_autocomplete(&self, ui: &mut egui::Ui, br: &egui::Response, body: &str) {
+        // 光标字节位置（char 索引 → byte 索引）
+        let Some(cursor_byte) = egui::text_edit::TextEditState::load(ui.ctx(), br.id)
+            .and_then(|s| s.cursor.char_range())
+            .map(|r| r.primary.index)
+            .map(|ci| {
+                body.char_indices()
+                    .nth(ci)
+                    .map_or(body.len(), |(byte, _)| byte)
+            })
+        else {
+            return;
+        };
+
+        // 光标前最近的 `[[`，且其后还没闭合 `]]`、未跨行
+        let before = &body[..cursor_byte];
+        let Some(open) = before.rfind("[[") else {
+            return;
+        };
+        let frag = &before[open + 2..];
+        if frag.contains("]]") || frag.contains('\n') {
+            return;
+        }
+        let query = frag.to_lowercase();
+
+        // 匹配的已有标题（排除自身、去重、最多 8 条）
+        let suggestions = self.graph_resource.read_resource(|g| {
+            let mut seen = std::collections::BTreeSet::new();
+            g.graph
+                .node_indices()
+                .filter(|&i| i != self.node_index)
+                .filter_map(|i| {
+                    let t = g.graph[i].text.clone();
+                    (!t.is_empty() && t.to_lowercase().contains(&query) && seen.insert(t.clone()))
+                        .then_some(t)
+                })
+                .take(8)
+                .collect::<Vec<_>>()
+        });
+        if suggestions.is_empty() {
+            return;
+        }
+
+        let mut chosen: Option<String> = None;
+        egui::Area::new(br.id.with("wikilink_ac"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(br.rect.left_bottom())
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_max_width(CARD_WIDTH);
+                    for s in &suggestions {
+                        if ui.selectable_label(false, s.as_str()).clicked() {
+                            chosen = Some(s.clone());
+                        }
+                    }
+                });
+            });
+
+        if let Some(title) = chosen {
+            let new_note = format!("{}{}]]{}", &body[..open + 2], title, &body[cursor_byte..]);
+            self.graph_resource.with_resource(|g| {
+                if let Some(n) = g.get_node_mut(self.node_index) {
+                    n.note = new_note;
+                }
             });
         }
     }
