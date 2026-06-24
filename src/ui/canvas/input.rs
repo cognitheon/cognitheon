@@ -1,28 +1,16 @@
-use std::sync::atomic::Ordering;
-
-use egui::{Id, PointerButton};
-
-use crate::{
-    graph::{
-        anchor::{BezierAnchor, LineAnchor},
-        edge::Edge,
-        node::Node,
-        render_info::NodeRenderInfo,
-    },
-    ui::{bezier::BezierEdge, line_edge::LineEdge, temp_edge::TempEdgeTarget},
-};
+use egui::Id;
 
 use super::data::CanvasWidget;
 
 impl CanvasWidget {
-    pub fn pre_render_actions(&mut self, ui: &mut egui::Ui) {
+    pub fn pre_render_actions(&mut self, _ui: &mut egui::Ui) {
         // make_input_idle(ui);
 
         // self.handle_scale(ui);
         // self.handle_pan(ui);
     }
 
-    pub fn post_render_actions(&mut self, ui: &mut egui::Ui, canvas_response: &egui::Response) {
+    pub fn post_render_actions(&mut self, _ui: &mut egui::Ui, _canvas_response: &egui::Response) {
         // self.input_manager.handle_input(ui, canvas_response);
         // self.handle_drag_select(ui, canvas_response);
         // self.handle_escape(ui, canvas_response);

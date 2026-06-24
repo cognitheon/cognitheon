@@ -7,4 +7,4 @@ pub mod graph;
 pub mod input;
 pub mod resource;
 pub mod ui;
-pub use app::TemplateApp;
+pub use app::CognitheonApp;

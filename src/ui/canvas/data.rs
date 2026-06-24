@@ -3,7 +3,7 @@ use petgraph::graph::NodeIndex;
 
 use crate::{
     input::{input_state::InputState, state_manager::InputStateManager},
-    resource::{CanvasStateResource, GraphResource, ParticleSystemResource},
+    resource::{CanvasStateResource, GraphResource},
     ui::temp_edge::TempEdge,
 };
 

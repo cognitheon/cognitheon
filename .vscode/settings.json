@@ -2,5 +2,7 @@
   "[rust]": {
     "editor.defaultFormatter": "rust-lang.rust-analyzer",
     "editor.formatOnSave": true
-  }
+  },
+  // rust-analyzer 使用独立的 target 目录，避免与命令行 cargo 争抢 `target` 构建锁（见 .gitignore 的 target_ra）
+  "rust-analyzer.cargo.targetDir": "target_ra"
 }

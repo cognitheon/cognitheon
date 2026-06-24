@@ -152,7 +152,7 @@ impl CanvasWidget {
                 .graph_resource
                 .read_resource(|graph| graph.get_selected_nodes());
 
-            let src_node_canvas_pos_vec = selected_node_indices
+            let _src_node_canvas_pos_vec = selected_node_indices
                 .iter()
                 .map(|index| {
                     self.canvas_state_resource.read_resource(|canvas_state| {

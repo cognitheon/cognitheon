@@ -13,4 +13,7 @@ target_wasm
 .lycheecache
 
 
-eframe_template*.log
+cognitheon*.log
+
+# OMC / 工具运行时状态
+.omc/

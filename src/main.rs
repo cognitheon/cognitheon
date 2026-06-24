@@ -6,8 +6,6 @@
 fn main() -> eframe::Result {
     // use eframe::{egui_wgpu, wgpu};
 
-    use std::sync::Arc;
-
     use eframe::{
         egui_wgpu::{self},
         wgpu,
@@ -20,23 +18,7 @@ fn main() -> eframe::Result {
         wgpu_options: egui_wgpu::WgpuConfiguration {
             present_mode: wgpu::PresentMode::AutoVsync,
             desired_maximum_frame_latency: Some(1),
-            on_surface_error: Arc::new(|e| {
-                println!("WGPU error: {e:?}");
-                egui_wgpu::SurfaceErrorAction::SkipFrame
-            }),
-            wgpu_setup: egui_wgpu::WgpuSetup::default(),
-            // wgpu_setup: egui_wgpu::WgpuSetup::CreateNew( {
-            //     instance_descriptor: wgpu::InstanceDescriptor {
-            //         backends: wgpu::Backends::all(),
-            //         flags: wgpu::InstanceFlags::default(),
-            //         backend_options: wgpu::BackendOptions::default(),
-            //     },
-            //     power_preference: wgpu::PowerPreference::HighPerformance,
-            //     device_descriptor: Arc::new(|_adapter| wgpu::DeviceDescriptor {
-            //         label: Some("egui-wgpu"),
-            //         ..Default::default()
-            //     }),
-            // }),
+            ..Default::default()
         },
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([800.0, 600.0])
@@ -51,9 +33,9 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "eframe template",
+        "Cognitheon",
         native_options,
-        Box::new(|cc| Ok(Box::new(eframe_template::TemplateApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(cognitheon::CognitheonApp::new(cc)))),
     )
 }
 
@@ -83,7 +65,7 @@ fn main() {
             .start(
                 canvas,
                 web_options,
-                Box::new(|cc| Ok(Box::new(eframe_template::TemplateApp::new(cc)))),
+                Box::new(|cc| Ok(Box::new(cognitheon::CognitheonApp::new(cc)))),
             )
             .await;
 

@@ -1,6 +1,6 @@
-use egui::{Color32, Id, Pos2, Stroke, Widget};
+use egui::Widget;
 
-use crate::ui::{helpers::draw_dashed_line_with_offset, temp_edge::TempEdgeWidget};
+use crate::ui::temp_edge::TempEdgeWidget;
 
 use super::{data::CanvasWidget, helpers::draw_grid};
 

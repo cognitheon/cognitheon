@@ -77,7 +77,7 @@ jobs:
           toolchain: stable
           target: wasm32-unknown-unknown
       - name: Download and install Trunk binary
-        run: wget -qO- https://github.com/thedodd/trunk/releases/latest/download/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xzf-
+        run: wget -qO- https://github.com/trunk-rs/trunk/releases/latest/download/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xzf-
       - name: Build
         run: ./trunk build
 
@@ -89,12 +89,6 @@ jobs:
         include:
           - os: macos-latest
             TARGET: aarch64-apple-darwin
-
-          - os: ubuntu-latest
-            TARGET: aarch64-unknown-linux-gnu
-
-          - os: ubuntu-latest
-            TARGET: armv7-unknown-linux-gnueabihf
 
           - os: ubuntu-latest
             TARGET: x86_64-unknown-linux-gnu
@@ -139,20 +133,20 @@ jobs:
   
 
       - name: Rename
-        run: cp target/${{ matrix.TARGET }}/release/eframe_template${{ matrix.EXTENSION }} eframe_template-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
+        run: cp target/${{ matrix.TARGET }}/release/cognitheon${{ matrix.EXTENSION }} cognitheon-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
 
       - uses: actions/upload-artifact@master
         with:
-          name: eframe_template-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
-          path: eframe_template-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
+          name: cognitheon-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
+          path: cognitheon-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
 
       - uses: svenstaro/upload-release-action@v2
         name: Upload binaries to release
         if: ${{ github.event_name == 'push' }}
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: eframe_template-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
-          asset_name: eframe_template-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
+          file: cognitheon-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
+          asset_name: cognitheon-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
           tag: ${{ github.ref }}
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           overwrite: true

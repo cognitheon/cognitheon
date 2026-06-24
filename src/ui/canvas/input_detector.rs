@@ -28,18 +28,13 @@ impl CanvasWidget {
     }
 
     pub fn drag_select(ui: &mut egui::Ui, canvas_response: &Response) -> bool {
-        if !is_input_busy(ui)
+        !is_input_busy(ui)
             && canvas_response.hovered()
             && ui.input(|i| {
                 i.pointer.button_down(egui::PointerButton::Primary)
                     && !i.key_down(egui::Key::Space)
                     && i.modifiers.is_none()
             })
-        {
-            return true;
-        } else {
-            return false;
-        }
         // if canvas_response.dragged_by(egui::PointerButton::Primary)
         //     && !ui.input(|i| i.key_pressed(egui::Key::Space))
         // {
@@ -66,6 +61,6 @@ impl CanvasWidget {
             && ui.input(|i| i.key_pressed(egui::Key::Tab))
             && self
                 .graph_resource
-                .read_resource(|graph| graph.editing_node == None && graph.selected.is_nodes())
+                .read_resource(|graph| graph.editing_node.is_none() && graph.selected.is_nodes())
     }
 }

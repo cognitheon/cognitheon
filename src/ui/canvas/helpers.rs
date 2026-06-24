@@ -1,10 +1,8 @@
-use eframe::egui_wgpu;
 use egui::Id;
 use petgraph::graph::NodeIndex;
 
 use crate::{
     canvas::CanvasState,
-    gpu_render::particle::particle_callback::ParticleCallback,
     graph::{
         anchor::{BezierAnchor, LineAnchor},
         render_info::NodeRenderInfo,

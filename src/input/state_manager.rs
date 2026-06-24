@@ -11,7 +11,7 @@ use crate::{
 
 use eframe::egui_wgpu;
 use egui::*;
-use petgraph::graph::{EdgeIndex, NodeIndex};
+use petgraph::graph::NodeIndex;
 
 use super::button_state::ButtonState;
 
@@ -402,22 +402,18 @@ impl InputStateManager {
             .set(PointerButton::Primary, true);
     }
 
-    fn handle_secondary_button_press(&mut self, ui: &mut egui::Ui, target: &InputTarget) {
+    fn handle_secondary_button_press(&mut self, _ui: &mut egui::Ui, target: &InputTarget) {
         // 目前只处理空闲状态下的右键点击
         if !matches!(self.current_state, InputState::Idle) {
             return;
         }
 
-        match target {
-            InputTarget::Node(node_index) => {
-                // 开始创建从此节点出发的边
-                self.transition_to(InputState::CreatingEdge {
-                    source_node: *node_index,
-                    current_cursor_pos: self.context.current_mouse_pos,
-                });
-            }
-            // 处理其他目标...
-            _ => {}
+        // 目前只处理：右键点在节点上 → 开始创建从此节点出发的边
+        if let InputTarget::Node(node_index) = target {
+            self.transition_to(InputState::CreatingEdge {
+                source_node: *node_index,
+                current_cursor_pos: self.context.current_mouse_pos,
+            });
         }
 
         self.context
@@ -425,7 +421,7 @@ impl InputStateManager {
             .set(PointerButton::Secondary, true);
     }
 
-    fn handle_primary_button_release(&mut self, ui: &mut egui::Ui, target: &InputTarget) {
+    fn handle_primary_button_release(&mut self, _ui: &mut egui::Ui, _target: &InputTarget) {
         match &self.current_state {
             InputState::Panning {
                 last_cursor_pos,
@@ -462,10 +458,10 @@ impl InputStateManager {
             .set(PointerButton::Primary, false);
     }
 
-    fn handle_secondary_button_release(&mut self, ui: &mut egui::Ui, target: &InputTarget) {
+    fn handle_secondary_button_release(&mut self, _ui: &mut egui::Ui, target: &InputTarget) {
         if let InputState::CreatingEdge {
             source_node,
-            current_cursor_pos,
+            current_cursor_pos: _,
         } = self.current_state
         {
             match target {
@@ -495,7 +491,7 @@ impl InputStateManager {
             .set(PointerButton::Secondary, false);
     }
 
-    fn handle_mouse_motion(&mut self, ui: &mut egui::Ui, delta: Vec2, target: &InputTarget) {
+    fn handle_mouse_motion(&mut self, _ui: &mut egui::Ui, delta: Vec2, _target: &InputTarget) {
         // if self.context.pressed_buttons.get(PointerButton::Primary) {
         //     println!("draw_particle_system");
         //     self.draw_particle_system(ui, ui.available_rect_before_wrap());
@@ -634,7 +630,7 @@ impl InputStateManager {
         });
     }
 
-    fn handle_double_click(&mut self, ui: &mut egui::Ui, target: &InputTarget) {
+    fn handle_double_click(&mut self, _ui: &mut egui::Ui, target: &InputTarget) {
         match target {
             InputTarget::Node(node_index) => {
                 // 双击节点开始编辑
@@ -842,7 +838,7 @@ impl InputStateManager {
                 egui::Stroke::new(2.0, egui::Color32::YELLOW),
             );
         }
-        let source_pos = self
+        let _source_pos = self
             .context
             .graph_resource
             .read_resource(|graph| graph.get_node(source_node).map(|node| node.position))

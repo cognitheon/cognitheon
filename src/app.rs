@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use egui::{Align, ComboBox, Id, Layout, RichText};
+#[cfg(not(target_arch = "wasm32"))]
 use rfd::AsyncFileDialog;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::{Builder, Runtime};
 
 use crate::resource::{CanvasStateResource, GraphResource, ParticleSystemResource};
@@ -14,7 +16,7 @@ use crate::ui::canvas::data::CanvasWidget;
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
-pub struct TemplateApp {
+pub struct CognitheonApp {
     // Example stuff:
     label: String,
 
@@ -27,18 +29,19 @@ pub struct TemplateApp {
     canvas_widget: CanvasWidget,
     #[serde(skip)]
     particle_system: Option<ParticleSystemResource>,
+    #[cfg(not(target_arch = "wasm32"))]
     #[serde(skip)]
     runtime: Runtime,
 }
 
-// impl Debug for TemplateApp {
+// impl Debug for CognitheonApp {
 //     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 //         write!(f, "{:?}", self.graph_resource)?;
 //         write!(f, "{:?}", self.canvas_resource)
 //     }
 // }
 
-impl Default for TemplateApp {
+impl Default for CognitheonApp {
     fn default() -> Self {
         let graph_resource = GraphResource::default();
         let canvas_resource = CanvasStateResource::default();
@@ -51,6 +54,7 @@ impl Default for TemplateApp {
             graph_resource: graph_resource.clone(),
             canvas_widget: CanvasWidget::new(graph_resource.clone(), canvas_resource.clone()),
             particle_system: None,
+            #[cfg(not(target_arch = "wasm32"))]
             runtime: Builder::new_multi_thread()
                 .worker_threads(1)
                 .enable_all()
@@ -60,7 +64,7 @@ impl Default for TemplateApp {
     }
 }
 
-impl TemplateApp {
+impl CognitheonApp {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // This is also where you can customize the look and feel of egui using
@@ -75,7 +79,7 @@ impl TemplateApp {
 
         let mut app = if let Some(storage) = cc.storage {
             println!("load");
-            let mut app: TemplateApp =
+            let mut app: CognitheonApp =
                 eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
             app.canvas_widget =
                 CanvasWidget::new(app.graph_resource.clone(), app.canvas_resource.clone());
@@ -84,7 +88,7 @@ impl TemplateApp {
         } else {
             Default::default()
         };
-        // let mut app: TemplateApp = Default::default();
+        // let mut app: CognitheonApp = Default::default();
 
         let wgpu_render_state = cc.wgpu_render_state.as_ref();
         if let Some(rs) = wgpu_render_state {
@@ -118,14 +122,14 @@ impl TemplateApp {
     // pub fn get_graph(ctx: &egui::Context) -> &Graph {
     //     ctx.data(|data| {
     //         let app = data
-    //             .get_persisted::<TemplateApp>(eframe::APP_KEY.into())
+    //             .get_persisted::<CognitheonApp>(eframe::APP_KEY.into())
     //             .unwrap();
     //         &app.graph
     //     })
     // }
 }
 
-impl eframe::App for TemplateApp {
+impl eframe::App for CognitheonApp {
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         // println!("save");
@@ -134,13 +138,11 @@ impl eframe::App for TemplateApp {
     }
 
     /// Called each time the UI needs repainting, which may be many times per second.
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let last_offset: f32 =
-            if let Some(offset) = ctx.data(|m| m.get_temp(Id::new("animation_offset"))) {
-                offset
-            } else {
-                0.0
-            };
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        let last_offset: f32 = ctx
+            .data(|m| m.get_temp(Id::new("animation_offset")))
+            .unwrap_or(0.0);
 
         let delta_time = ctx.input(|i| i.stable_dt).min(0.1); // 稳定的一帧时间
         let speed = 20.0; // 像素/秒
@@ -168,13 +170,13 @@ impl eframe::App for TemplateApp {
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
 
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+        egui::Panel::top("top_panel").show_inside(ui, |ui| {
             // The top panel is often a good place for a menu bar:
 
-            egui::menu::bar(ui, |ui| {
-                // NOTE: no File->Quit on web pages!
-                let is_web = cfg!(target_arch = "wasm32");
-                if !is_web {
+            egui::MenuBar::new().ui(ui, |ui| {
+                // NOTE: 文件 Save/Load 走 tokio + rfd，仅 native；web 上不显示 File 菜单。
+                #[cfg(not(target_arch = "wasm32"))]
+                {
                     ui.menu_button("File", |ui| {
                         if ui.button("New").clicked() {
                             println!("new");
@@ -182,7 +184,7 @@ impl eframe::App for TemplateApp {
                         }
 
                         if ui.button("Save").clicked() {
-                            ui.close_menu();
+                            ui.close();
                             println!("save");
                             let future = async {
                                 let file = AsyncFileDialog::new()
@@ -203,7 +205,7 @@ impl eframe::App for TemplateApp {
 
                         if ui.button("Load").clicked() {
                             println!("load file");
-                            ui.close_menu();
+                            ui.close();
                             let future = async {
                                 let file = AsyncFileDialog::new()
                                     .add_filter("Cognitheon", &["cnt"])
@@ -217,7 +219,7 @@ impl eframe::App for TemplateApp {
                                 data
                             };
                             let data = self.runtime.block_on(future);
-                            match serde_json::from_slice::<TemplateApp>(&data) {
+                            match serde_json::from_slice::<CognitheonApp>(&data) {
                                 Ok(app) => {
                                     self.graph_resource = app.graph_resource;
                                     self.canvas_resource = app.canvas_resource;
@@ -275,7 +277,7 @@ impl eframe::App for TemplateApp {
             });
         });
 
-        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+        egui::Panel::bottom("bottom_panel").show_inside(ui, |ui| {
             ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::LEFT), |ui| {
                     current_zoom(ui, &self.canvas_resource);
@@ -308,7 +310,7 @@ impl eframe::App for TemplateApp {
 
         egui::CentralPanel::default()
             // .frame(egui::Frame::default().outer_margin(egui::Margin::same(3.0)))
-            .show(ctx, |ui| {
+            .show_inside(ui, |ui| {
                 ui.add(&mut self.canvas_widget);
 
                 // egui::Window::new("test")
@@ -364,7 +366,7 @@ fn current_input_state(ui: &mut egui::Ui, input_state_manager: &InputStateManage
     ui.label(format!("input_state: {:?}", input_state));
 }
 
-fn current_fps(ui: &mut egui::Ui, input_state_manager: &InputStateManager) {
+fn current_fps(ui: &mut egui::Ui, _input_state_manager: &InputStateManager) {
     let dt = ui.ctx().input(|i| i.stable_dt);
     ui.label(format!("fps: {:?}", 1.0 / dt));
 }

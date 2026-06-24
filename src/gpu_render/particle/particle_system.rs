@@ -1,7 +1,7 @@
 use eframe::egui_wgpu::wgpu;
 use eframe::egui_wgpu::wgpu::util::DeviceExt;
 use eframe::wgpu::PipelineCompilationOptions;
-use rand::Rng;
+use rand::RngExt;
 use std::num::NonZeroU64;
 
 use super::particle_impl::Particle;
@@ -122,8 +122,8 @@ impl ParticleSystem {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("particle_pipeline_layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
 
         // 这里为了演示，采用点列表(PrimitiveTopology::PointList)来绘制粒子
@@ -153,7 +153,7 @@ impl ParticleSystem {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
         });
 
         Self {

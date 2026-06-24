@@ -1,7 +1,7 @@
 [package]
-name = "eframe_template"
+name = "cognitheon"
 version = "0.1.0"
-authors = ["Emil Ernerfeldt <emil.ernerfeldt@gmail.com>"]
+authors = ["dyzdyz010 <dyzdyz010@gmail.com>"]
 edition = "2021"
 include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml"]
 rust-version = "1.85"
@@ -11,8 +11,8 @@ all-features = true
 targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 
 [dependencies]
-egui = { version = "0.31", features = ["serde"] }
-eframe = { version = "0.31", default-features = false, features = [
+egui = { version = "0.34", features = ["serde"] }
+eframe = { version = "0.34", default-features = false, features = [
     "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
     "default_fonts", # Embed the default egui fonts.
     # "glow",          # Use the glow rendering backend. Alternative: "wgpu".
@@ -27,22 +27,23 @@ typetag = "0.2"
 # You only need serde if you want app persistence:
 serde = { version = "1", features = ["derive"] }
 
-petgraph = { version = "0.7.1", features = ["serde-1"] }
-bytemuck = "1.21.0"
-rand = "0.9.0"
-rfd = "0.15.2"
-serde_json = "1.0.138"
-tokio = { version = "1", features = ["full"] }
+petgraph = { version = "0.8", features = ["serde-1"] }
+bytemuck = "1.25"
+rand = "0.10"
+rfd = "0.17"
+serde_json = "1.0"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.11"
+# tokio 仅用于 native 的文件对话框 block_on；其 net 特性依赖 mio，不支持 wasm32
+tokio = { version = "1", features = ["full"] }
 
 # web:
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4"
-web-sys = "0.3.70"           # to access the DOM (to hide the loading text)
-getrandom = { version = "0.3", features = ["wasm_js"] }
+web-sys = "0.3.77"           # to access the DOM (to hide the loading text)
+getrandom = { version = "0.4", features = ["wasm_js"] }
 
 # [target.'cfg(target_arch = "wasm32")']
 # rustflags = ["--cfg", "getrandom_backend=\"wasm_js\""]

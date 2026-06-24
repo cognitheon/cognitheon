@@ -451,6 +451,8 @@ impl Widget for NodeWidget {
 }
 
 impl NodeWidget {
+    /// 调试用：在节点右上角绘制其 NodeIndex（当前未接线，见 AGENTS.md §5 调试钩子）。
+    #[allow(dead_code)]
     fn draw_node_id(&self, ui: &mut egui::Ui, node_response: &egui::Response) {
         let scale_level = (self
             .canvas_state_resource
