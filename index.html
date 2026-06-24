@@ -9,7 +9,8 @@
     <title>Cognitheon</title>
 
     <!-- config for our rust wasm binary. go to https://trunkrs.dev/assets/#rust for more customization -->
-    <link data-trunk rel="rust" data-wasm-opt="2" />
+    <!-- data-bin 指定要编成 web 应用的二进制（仓库还有一个 headless CLI bin，trunk 多 bin 时须显式指定） -->
+    <link data-trunk rel="rust" data-bin="cognitheon" data-wasm-opt="2" />
     <!-- this is the base url relative to which other urls will be constructed. trunk will insert this from the public-url option -->
     <base data-trunk-public-url />
 
