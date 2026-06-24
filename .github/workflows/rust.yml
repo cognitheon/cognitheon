@@ -83,6 +83,10 @@ jobs:
 
   build:
     runs-on: ${{ matrix.os }}
+    # 产出 release 二进制的 job 不应被全局 -D warnings 卡住（那是给 lint/check 的）
+    env:
+      RUSTFLAGS: ""
+      RUSTDOCFLAGS: ""
     strategy:
       fail-fast: false
       matrix:
@@ -101,11 +105,12 @@ jobs:
       - name: Building ${{ matrix.TARGET }}
         run: echo "${{ matrix.TARGET }}"
 
-      - uses: actions/checkout@master
-      - name: Install build dependencies - Rustup
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain stable --profile default --target ${{ matrix.TARGET }} -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - uses: actions/checkout@v4
+      # 用 runner 原生 host 工具链（Windows 上即 msvc，避免 curl 安装误设为 gnu host）并加上目标
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.TARGET }}
 
       # 三个目标均为各自 runner 的原生 target，直接用 cargo 构建（无需 cross；旧版 cross 在新工具链上已编译不过）
       - name: Install Linux GUI build dependencies
