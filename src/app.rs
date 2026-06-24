@@ -185,51 +185,59 @@ impl eframe::App for CognitheonApp {
 
                         if ui.button("Save").clicked() {
                             ui.close();
-                            println!("save");
-                            let future = async {
-                                let file = AsyncFileDialog::new()
-                                    .add_filter("Cognitheon", &["cnt"])
-                                    .set_directory("~")
-                                    .save_file()
-                                    .await;
-
-                                let data = serde_json::to_string(&self).unwrap();
-                                let file = file.unwrap();
-                                match file.write(data.as_bytes()).await {
-                                    Ok(_) => println!("save success"),
-                                    Err(e) => println!("save failed: {}", e),
+                            // 读出图 + 画布，序列化为带 schema 版本号的开放 JSON 文档
+                            match self.graph_resource.read_resource(|graph| {
+                                self.canvas_resource.read_resource(|canvas| {
+                                    crate::persistence::save_string(graph, Some(canvas))
+                                })
+                            }) {
+                                Ok(data) => {
+                                    let future = async move {
+                                        if let Some(file) = AsyncFileDialog::new()
+                                            .add_filter("Cognitheon", &["cnt"])
+                                            .set_directory("~")
+                                            .save_file()
+                                            .await
+                                        {
+                                            match file.write(data.as_bytes()).await {
+                                                Ok(_) => log::info!("save success"),
+                                                Err(e) => log::error!("save failed: {e}"),
+                                            }
+                                        }
+                                    };
+                                    self.runtime.block_on(future);
                                 }
-                            };
-                            self.runtime.block_on(future);
+                                Err(e) => log::error!("serialize failed: {e}"),
+                            }
                         }
 
                         if ui.button("Load").clicked() {
-                            println!("load file");
                             ui.close();
                             let future = async {
-                                let file = AsyncFileDialog::new()
+                                match AsyncFileDialog::new()
                                     .add_filter("Cognitheon", &["cnt"])
                                     .set_directory("~")
                                     .pick_file()
-                                    .await;
-
-                                let file = file.unwrap();
-                                let data = file.read().await;
-
-                                data
-                            };
-                            let data = self.runtime.block_on(future);
-                            match serde_json::from_slice::<CognitheonApp>(&data) {
-                                Ok(app) => {
-                                    self.graph_resource = app.graph_resource;
-                                    self.canvas_resource = app.canvas_resource;
-
-                                    self.canvas_widget = CanvasWidget::new(
-                                        self.graph_resource.clone(),
-                                        self.canvas_resource.clone(),
-                                    );
+                                    .await
+                                {
+                                    Some(file) => Some(file.read().await),
+                                    None => None,
                                 }
-                                Err(e) => println!("load failed: {}", e),
+                            };
+                            if let Some(data) = self.runtime.block_on(future) {
+                                // 兼容旧 .cnt：persistence::load 会回退解析无版本号的旧格式
+                                match crate::persistence::load(&data) {
+                                    Ok(doc) => {
+                                        let (graph, canvas) = doc.into_parts();
+                                        self.graph_resource = GraphResource::new(graph);
+                                        self.canvas_resource = CanvasStateResource::new(canvas);
+                                        self.canvas_widget = CanvasWidget::new(
+                                            self.graph_resource.clone(),
+                                            self.canvas_resource.clone(),
+                                        );
+                                    }
+                                    Err(e) => log::error!("load failed: {e}"),
+                                }
                             }
                         }
 

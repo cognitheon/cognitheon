@@ -106,7 +106,7 @@ impl Graph {
 
     pub fn remove_node(&mut self, node_index: NodeIndex) {
         let result = self.graph.remove_node(node_index);
-        println!("result: {:?}", result);
+        log::debug!("remove_node result: {result:?}");
         // self.selected_nodes.clear();
         self.editing_node = None;
     }

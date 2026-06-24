@@ -5,6 +5,7 @@ pub mod geometry;
 pub mod gpu_render;
 pub mod graph;
 pub mod input;
+pub mod persistence;
 pub mod resource;
 pub mod ui;
 pub use app::CognitheonApp;
