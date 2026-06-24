@@ -8,4 +8,5 @@ pub mod input;
 pub mod persistence;
 pub mod resource;
 pub mod ui;
+pub mod wikilink;
 pub use app::CognitheonApp;

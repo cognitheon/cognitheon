@@ -16,6 +16,11 @@
 //!   dump                        打印全部节点与边
 //!   save <path>                 存为带版本号的 JSON，返回 `ok bytes <n>`
 //!   load <path>                 从文件加载（兼容旧 .cnt），返回 `ok nodes <n> edges <m>`
+//!   link <i> <j>                建一条 i->j 的裸边（不防自环/重复，区别于 parse 的双链）
+//!   parse <i>                   解析节点 i 正文里的 [[标题]]，自动建/连节点（双链）
+//!   backlinks <i>               列出指向节点 i 的反向链接
+//!   search <query>              全文搜索（标题/正文）
+//!   find <title>                按精确标题找节点，返回 `node <index>`
 //!   reset                       清空
 //!   help                        打印命令
 //!   quit | exit                 退出
@@ -23,21 +28,23 @@
 use std::io::{self, BufRead, Write};
 
 use cognitheon::canvas::CanvasState;
+use cognitheon::graph::edge::Edge;
 use cognitheon::graph::graph_impl::Graph;
 use cognitheon::graph::node::Node;
-use cognitheon::persistence;
+use cognitheon::resource::CanvasStateResource;
+use cognitheon::{persistence, wikilink};
 use petgraph::graph::NodeIndex;
 
 struct Session {
     graph: Graph,
-    canvas: CanvasState,
+    canvas: CanvasStateResource,
 }
 
 impl Session {
     fn new() -> Self {
         Self {
             graph: Graph::default(),
-            canvas: CanvasState::default(),
+            canvas: CanvasStateResource::new(CanvasState::default()),
         }
     }
 }
@@ -73,6 +80,7 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
             [
                 "commands: new <x> <y> [title] | title <i> <t> | body <i> <b> | get <i>",
                 "          rm <i> | count | dump | save <path> | load <path> | reset | quit",
+                "          link <i> <j> | parse <i> | backlinks <i> | search <q> | find <title>",
             ]
             .iter()
             .map(|s| s.to_string())
@@ -84,7 +92,7 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
             let x: f32 = it.next().unwrap_or("").parse().map_err(|_| "bad x")?;
             let y: f32 = it.next().unwrap_or("").parse().map_err(|_| "bad y")?;
             let title = unescape(it.next().unwrap_or(""));
-            let id = s.canvas.new_node_id();
+            let id = s.canvas.read_resource(|c| c.new_node_id());
             let idx = s.graph.add_node(Node {
                 id,
                 position: egui::pos2(x, y),
@@ -169,7 +177,9 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
             if rest.is_empty() {
                 return Err("usage: save <path>".into());
             }
-            let data = persistence::save_string(&s.graph, Some(&s.canvas))
+            let data = s
+                .canvas
+                .read_resource(|c| persistence::save_string(&s.graph, Some(c)))
                 .map_err(|e| format!("serialize: {e}"))?;
             std::fs::write(rest, &data).map_err(|e| format!("write: {e}"))?;
             Ok(Some(vec![format!("ok bytes {}", data.len())]))
@@ -183,7 +193,7 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
             let doc = persistence::load(&data).map_err(|e| format!("parse: {e}"))?;
             let (graph, canvas) = doc.into_parts();
             s.graph = graph;
-            s.canvas = canvas;
+            s.canvas = CanvasStateResource::new(canvas);
             Ok(Some(vec![format!(
                 "ok nodes {} edges {}",
                 s.graph.graph.node_count(),
@@ -194,6 +204,81 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
         "reset" => {
             s.graph.reset();
             Ok(Some(vec!["ok".into()]))
+        }
+
+        "link" => {
+            let mut it = rest.splitn(2, ' ');
+            let src = parse_index(it.next().unwrap_or(""))?;
+            let dst = parse_index(it.next().unwrap_or(""))?;
+            let sp = s.graph.get_node(src).ok_or("no such src")?.position;
+            let tp = s.graph.get_node(dst).ok_or("no such dst")?.position;
+            s.graph
+                .add_edge(Edge::new(src, dst, sp, tp, s.canvas.clone()));
+            Ok(Some(vec![format!(
+                "ok edges {}",
+                s.graph.graph.edge_count()
+            )]))
+        }
+
+        "parse" => {
+            let idx = parse_index(rest)?;
+            if s.graph.get_node(idx).is_none() {
+                return Err("no such node".into());
+            }
+            let out = wikilink::resolve_links(&mut s.graph, &s.canvas, idx);
+            let mut lines = vec![format!(
+                "ok created_nodes {} created_edges {}",
+                out.created_nodes.len(),
+                out.created_edges
+            )];
+            for n in out.created_nodes {
+                lines.push(format!(
+                    "created {} {}",
+                    n.index(),
+                    escape(&s.graph.graph[n].text)
+                ));
+            }
+            for a in &out.ambiguous {
+                lines.push(format!("ambiguous {}", escape(a)));
+            }
+            Ok(Some(lines))
+        }
+
+        "backlinks" => {
+            let idx = parse_index(rest)?;
+            if s.graph.get_node(idx).is_none() {
+                return Err("no such node".into());
+            }
+            let bs = wikilink::backlinks(&s.graph, idx);
+            let mut lines: Vec<String> = bs
+                .iter()
+                .map(|b| format!("backlink {} {}", b.index(), escape(&s.graph.graph[*b].text)))
+                .collect();
+            lines.push(format!("ok count {}", bs.len()));
+            Ok(Some(lines))
+        }
+
+        "search" => {
+            if rest.is_empty() {
+                return Err("usage: search <query>".into());
+            }
+            let hits = wikilink::search(&s.graph, rest);
+            let mut lines: Vec<String> = hits
+                .iter()
+                .map(|h| format!("hit {} {}", h.index(), escape(&s.graph.graph[*h].text)))
+                .collect();
+            lines.push(format!("ok count {}", hits.len()));
+            Ok(Some(lines))
+        }
+
+        "find" => {
+            if rest.is_empty() {
+                return Err("usage: find <title>".into());
+            }
+            match wikilink::find_by_title(&s.graph, rest) {
+                Some(idx) => Ok(Some(vec![format!("node {}", idx.index())])),
+                None => Err("not found".into()),
+            }
         }
 
         other => Err(format!("unknown command: {other}")),
