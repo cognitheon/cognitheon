@@ -145,10 +145,12 @@ impl CognitheonApp {
             return;
         };
 
-        let (title, outlinks) = self.graph_resource.read_resource(|g| match g.get_node(idx) {
-            Some(n) => (n.text.clone(), wikilink::parse_links(&n.note)),
-            None => (String::new(), Vec::new()),
-        });
+        let (title, outlinks) = self
+            .graph_resource
+            .read_resource(|g| match g.get_node(idx) {
+                Some(n) => (n.text.clone(), wikilink::parse_links(&n.note)),
+                None => (String::new(), Vec::new()),
+            });
         let title_disp = if title.is_empty() {
             "（无标题）"
         } else {
