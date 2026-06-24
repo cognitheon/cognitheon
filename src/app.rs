@@ -624,6 +624,15 @@ impl eframe::App for CognitheonApp {
                 //     });
             });
 
+        // 读模式正文里点击 [[已存在标题]] 的跨层 focus 请求（隐式状态总线）：NodeWidget 渲染时
+        // 写入目标 NodeIndex，这里读取后复用既有 focus_node（选中 + 居中），随即清除——
+        // 单一 focus 实现、note 原文不被改写。放在画布渲染之后，确保拿得到本帧写入的请求。
+        if let Some(target) = ctx.data_mut(|d| {
+            d.remove_temp::<petgraph::graph::NodeIndex>(Id::new(crate::ui::node::FOCUS_REQUEST_KEY))
+        }) {
+            self.focus_node(&ctx, target);
+        }
+
         // ctx.show_viewport_deferred(
         //     ViewportId::from_hash_of("test"),
         //     ViewportBuilder::default().with_title("testwindow"),

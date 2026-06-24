@@ -297,6 +297,31 @@ const CARD_WIDTH: f32 = 240.0;
 /// 正文区最大高度，超出滚动。
 const BODY_MAX_HEIGHT: f32 = 160.0;
 
+/// 读模式正文里 `[[标题]]` 渲染为可点链接时使用的自定义 URL scheme 前缀。
+///
+/// 形如 `wikilink:0` / `wikilink:1`——纯 ASCII 数字下标，避开标题里中文 / 空格 /
+/// markdown 特殊字符的 URL 编码问题；真正的标题与目标 [`NodeIndex`] 经一张当帧重建的
+/// 旁表传递（见 [`NodeWidget::show_body_markdown`]），不进 URL。
+const WIKILINK_SCHEME: &str = "wikilink:";
+
+/// 跨层"focus 请求"总线 key（隐式状态总线约定）：读模式正文里点击 `[[已存在标题]]` 时，
+/// [`NodeWidget`] 往 egui temp data 写入目标 [`NodeIndex`]，由 [`crate::app::CognitheonApp::ui`]
+/// 读取并调用既有 `focus_node`（选中 + 居中）后清除——复用单一 focus 实现、零跨层耦合。
+pub const FOCUS_REQUEST_KEY: &str = "focus_request_node";
+
+/// 转义双链标题作为 markdown 链接显示文本 `[…]`：反斜杠转义会破坏链接文本闭合的字符
+/// （`\`、`[`、`]`），使含 markdown 特殊字符的标题（如 `a[b]`）能完整、安全地显示。
+fn escape_md_link_text(title: &str) -> String {
+    let mut out = String::with_capacity(title.len());
+    for ch in title.chars() {
+        if matches!(ch, '\\' | '[' | ']') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 impl Widget for NodeWidget {
     fn ui(mut self, ui: &mut egui::Ui) -> egui::Response {
         // 读取节点数据与状态
@@ -351,9 +376,7 @@ impl Widget for NodeWidget {
                                 .max_height(BODY_MAX_HEIGHT)
                                 .auto_shrink([false, true])
                                 .show(ui, |ui| {
-                                    MARKDOWN_CACHE.with_borrow_mut(|cache| {
-                                        CommonMarkViewer::new().show(ui, cache, &body);
-                                    });
+                                    self.show_body_markdown(ui, &body);
                                 });
                         }
                     }
@@ -402,6 +425,56 @@ impl Widget for NodeWidget {
 }
 
 impl NodeWidget {
+    /// 读模式正文渲染：把正文里的 `[[标题]]` 在**渲染时**转换为可点击的双链，点击后请求
+    /// 跳转聚焦目标节点。**绝不改写 `Node.note` 原文**（SSOT）——转换只发生在这帧的临时字符串上。
+    ///
+    /// 实现要点：
+    /// - **已存在**标题（`find_by_title` 命中）→ 替换为标准 markdown 链接 `[标题](wikilink:N)`，
+    ///   并把 `wikilink:N → NodeIndex` 记进当帧旁表 + 经 `cache.add_link_hook` 注册为链接钩子；
+    ///   egui_commonmark 见到已注册的 destination 会渲染成 `ui.link`（而非外部超链接），点击置位钩子。
+    /// - **未创建**标题（无命中）→ **原样保留** `[[标题]]`，CommonMark 当作普通文本渲染，
+    ///   天然与蓝色链接区分、不可点（符合"仅弱显不可跳转"的默认）。
+    /// - destination 用纯数字下标（非标题本身），规避中文 / 空格 / markdown 特殊字符的 URL 编码坑；
+    ///   普通 markdown 链接 `[x](http://…)` 因 destination 未注册为钩子，仍走原有外链逻辑，互不影响。
+    fn show_body_markdown(&self, ui: &mut egui::Ui, body: &str) {
+        // 收集正文里的 [[标题]]，解析出已存在的目标，构造"转换后的 markdown"+ destination→目标 旁表。
+        let titles = wikilink::parse_links(body);
+        let resolved: Vec<(String, NodeIndex)> = self.graph_resource.read_resource(|g| {
+            titles
+                .iter()
+                .filter_map(|t| wikilink::find_by_title(g, t).map(|idx| (t.clone(), idx)))
+                .collect()
+        });
+
+        MARKDOWN_CACHE.with_borrow_mut(|cache| {
+            // 旁表每帧重建；先清掉上一帧（可能来自任意节点）残留的链接钩子，避免跨节点串味与无界增长。
+            cache.link_hooks_clear();
+
+            // 把已存在的 [[标题]] 整体替换为 [标题](wikilink:N)，并登记钩子。
+            // 注意按"标题"做整体替换（含 [[ ]]）；同一标题多处出现共用同一 destination。
+            let mut rendered = body.to_owned();
+            for (i, (title, _idx)) in resolved.iter().enumerate() {
+                let dest = format!("{WIKILINK_SCHEME}{i}");
+                let needle = format!("[[{title}]]");
+                let link = format!("[{}]({dest})", escape_md_link_text(title));
+                rendered = rendered.replace(&needle, &link);
+                cache.add_link_hook(dest);
+            }
+
+            CommonMarkViewer::new().show(ui, cache, &rendered);
+
+            // 渲染后回读：哪个钩子被点了 → 写 focus 请求（跨层交给 app.rs 调 focus_node）。
+            for (i, (_title, idx)) in resolved.iter().enumerate() {
+                let dest = format!("{WIKILINK_SCHEME}{i}");
+                if cache.get_link_hook(&dest) == Some(true) {
+                    log::debug!("wikilink clicked in body -> focus {:?}", idx);
+                    ui.ctx()
+                        .data_mut(|d| d.insert_temp(Id::new(FOCUS_REQUEST_KEY), *idx));
+                }
+            }
+        });
+    }
+
     /// 编辑态：标题单行 + 正文多行（Markdown 源）；Ctrl/Cmd+Enter 退出并解析 `[[双链]]`。
     fn show_editor(&self, ui: &mut egui::Ui, title: &str, body: &str) {
         let mut t = title.to_owned();
@@ -679,5 +752,20 @@ impl NodeWidget {
             font.clone(),
             egui::Color32::RED,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::escape_md_link_text;
+
+    #[test]
+    fn escape_md_link_text_escapes_brackets_and_backslash() {
+        // 含 markdown 链接文本特殊字符的标题被反斜杠转义，不会破坏 `[…]` 闭合。
+        assert_eq!(escape_md_link_text("a[b]"), r"a\[b\]");
+        assert_eq!(escape_md_link_text(r"x\y"), r"x\\y");
+        // 普通标题（含中文 / 空格）原样保留。
+        assert_eq!(escape_md_link_text("知识 图谱"), "知识 图谱");
+        assert_eq!(escape_md_link_text("plain"), "plain");
     }
 }
