@@ -17,6 +17,21 @@ thread_local! {
         std::cell::RefCell::new(CommonMarkCache::default());
 }
 
+/// `[[` 自动补全 popup 打开时，于 TextEdit 渲染前拦截到的键盘动作。
+///
+/// 经 egui temp data 从 [`NodeWidget::show_editor`] 顶部的拦截点传递到
+/// [`NodeWidget::wikilink_autocomplete`]——之所以要先拦截再传递，是因为 multiline
+/// `TextEdit` 会在自己的渲染里把 Enter / Tab 当文本吃掉，必须赶在它之前 `consume_key`。
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum AcKey {
+    #[default]
+    None,
+    Up,
+    Down,
+    Confirm,
+    Close,
+}
+
 pub struct NodeWidget {
     pub node_index: NodeIndex,
     pub graph_resource: GraphResource,
@@ -394,6 +409,36 @@ impl NodeWidget {
         ui.separator();
 
         let mut b = body.to_owned();
+
+        // 补全 popup 的键盘拦截必须发生在 TextEdit 渲染之前——multiline TextEdit 会在自己的
+        // `ui.add` 里把 Enter 当换行、Tab 当缩进吃掉。故：上一帧 popup 开着时，在此先把
+        // ↑/↓/Tab/Enter/Esc 从输入队列 consume 掉（TextEdit 当帧便看不到），把动作暂存进
+        // temp data，交由 `wikilink_autocomplete` 取用。key 命名遵循隐式状态总线风格。
+        let body_id = ui.id().with(("node_body", self.node_index));
+        let ac_open_last = ui
+            .ctx()
+            .data(|d| d.get_temp::<bool>(body_id.with("wikilink_ac_open")))
+            .unwrap_or(false);
+        if ac_open_last && ui.memory(|m| m.has_focus(body_id)) {
+            let action = ui.input_mut(|i| {
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
+                    || i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                {
+                    AcKey::Confirm
+                } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
+                    AcKey::Down
+                } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+                    AcKey::Up
+                } else if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
+                    AcKey::Close
+                } else {
+                    AcKey::None
+                }
+            });
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(body_id.with("wikilink_ac_key"), action));
+        }
+
         // Markdown 源码语法高亮（含 [[双链]] 高亮）
         let md_colors = crate::ui::md_highlight::MdColors::from_visuals(ui.visuals());
         let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
@@ -405,6 +450,7 @@ impl NodeWidget {
             .show(ui, |ui| {
                 ui.add(
                     egui::TextEdit::multiline(&mut b)
+                        .id(body_id)
                         .hint_text("正文（Markdown；用 [[标题]] 建双链）")
                         .desired_width(f32::INFINITY)
                         .desired_rows(4)
@@ -420,10 +466,10 @@ impl NodeWidget {
             });
         }
 
-        // [[ 自动补全：光标前是未闭合的 `[[query` 时，弹出匹配的已有标题，点击即补全
-        if br.has_focus() {
-            self.wikilink_autocomplete(ui, &br, &b);
-        }
+        // [[ 自动补全：光标前是未闭合的 `[[query` 时，弹出匹配的已有标题；
+        // 键盘 ↑/↓ 选择、Tab/Enter 确认、Esc 关闭，鼠标点击亦可确认。
+        // popup 打开时无修饰键的 Enter 会被它消费，故下方 Ctrl+Enter 退出逻辑不会被误触。
+        self.wikilink_autocomplete(ui, &br, &b);
 
         // Ctrl/Cmd + Enter：退出编辑，并把正文里的 [[双链]] 落到图上
         if ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command) {
@@ -434,9 +480,37 @@ impl NodeWidget {
         }
     }
 
-    /// `[[` 自动补全：检测光标前未闭合的 `[[query`，弹出匹配的已有标题，点击补全为 `[[标题]]`。
-    fn wikilink_autocomplete(&self, ui: &mut egui::Ui, br: &egui::Response, body: &str) {
-        // 光标字节位置（char 索引 → byte 索引）
+    /// `[[` 自动补全：检测光标前未闭合的 `[[query`，弹出匹配的已有标题。
+    ///
+    /// 交互：↑/↓ 移动高亮、Tab/Enter 确认、Esc 关闭、鼠标点击亦可确认；确认后补全为
+    /// `[[标题]]` 并把光标移到 `]]` 之后。返回值表示本帧 popup 是否处于打开态。
+    ///
+    /// 架构要点（修复焦点陷阱）：popup 用 [`egui::Popup::from_response`] 渲染在独立 popup 图层、
+    /// `Sense::click()`，故点击候选项不依赖 `TextEdit` 当帧是否持焦，`clicked()` 能在释放帧捕获；
+    /// 是否打开仅由"光标处于未闭合 `[[query` 上下文"决定（该上下文跨焦点转移帧依然成立），
+    /// 不再以 `br.has_focus()` 当帧门控，从根上消除"点击转移焦点导致 popup 当帧消失"。
+    /// 高亮索引持久化在 egui temp data（key = `br.id.with("wikilink_ac_sel")`，遵循隐式状态总线风格），
+    /// query 变化时被钳制到合法区间。
+    fn wikilink_autocomplete(&self, ui: &mut egui::Ui, br: &egui::Response, body: &str) -> bool {
+        let open_id = br.id.with("wikilink_ac_open");
+        let sel_id = br.id.with("wikilink_ac_sel");
+        let key_id = br.id.with("wikilink_ac_key");
+
+        // 取出本帧 TextEdit 渲染前拦截到的键盘动作（见 show_editor 顶部），随即清空。
+        let pending = ui
+            .ctx()
+            .data_mut(|d| d.remove_temp::<AcKey>(key_id))
+            .unwrap_or(AcKey::None);
+
+        // 不开/早退时统一清理持久化状态的小工具。
+        let clear = |ctx: &egui::Context| {
+            ctx.data_mut(|d| {
+                d.remove::<usize>(sel_id);
+                d.remove::<bool>(open_id);
+            });
+        };
+
+        // 光标字节位置（char 索引 → byte 索引）；无 TextEdit 状态（从未聚焦）则不弹。
         let Some(cursor_byte) = egui::text_edit::TextEditState::load(ui.ctx(), br.id)
             .and_then(|s| s.cursor.char_range())
             .map(|r| r.primary.index)
@@ -446,17 +520,20 @@ impl NodeWidget {
                     .map_or(body.len(), |(byte, _)| byte)
             })
         else {
-            return;
+            clear(ui.ctx());
+            return false;
         };
 
         // 光标前最近的 `[[`，且其后还没闭合 `]]`、未跨行
         let before = &body[..cursor_byte];
         let Some(open) = before.rfind("[[") else {
-            return;
+            clear(ui.ctx());
+            return false;
         };
         let frag = &before[open + 2..];
         if frag.contains("]]") || frag.contains('\n') {
-            return;
+            clear(ui.ctx());
+            return false;
         }
         let query = frag.to_lowercase();
 
@@ -475,32 +552,72 @@ impl NodeWidget {
                 .collect::<Vec<_>>()
         });
         if suggestions.is_empty() {
-            return;
+            clear(ui.ctx());
+            return false;
         }
 
+        // 高亮索引（持久化），按候选数量钳制——query 变化导致候选变少时不越界。
+        let mut selected = ui
+            .ctx()
+            .data(|d| d.get_temp::<usize>(sel_id))
+            .unwrap_or(0)
+            .min(suggestions.len() - 1);
+
+        // 应用 TextEdit 渲染前拦截到的键盘动作。
         let mut chosen: Option<String> = None;
-        egui::Area::new(br.id.with("wikilink_ac"))
-            .order(egui::Order::Foreground)
-            .fixed_pos(br.rect.left_bottom())
-            .show(ui.ctx(), |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.set_max_width(CARD_WIDTH);
-                    for s in &suggestions {
-                        if ui.selectable_label(false, s.as_str()).clicked() {
-                            chosen = Some(s.clone());
-                        }
+        match pending {
+            AcKey::Down => selected = (selected + 1) % suggestions.len(),
+            AcKey::Up => selected = (selected + suggestions.len() - 1) % suggestions.len(),
+            AcKey::Confirm => chosen = Some(suggestions[selected].clone()),
+            AcKey::Close => {
+                clear(ui.ctx());
+                return false;
+            }
+            AcKey::None => {}
+        }
+
+        // 渲染：独立 popup 图层 + IgnoreClicks（点击候选项不致 popup 自关，确认逻辑由我们接管）。
+        egui::Popup::from_response(br)
+            .id(br.id.with("wikilink_ac"))
+            .open(true)
+            .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
+            .gap(2.0)
+            .show(|ui| {
+                ui.set_max_width(CARD_WIDTH);
+                for (idx, s) in suggestions.iter().enumerate() {
+                    if ui.selectable_label(idx == selected, s.as_str()).clicked() {
+                        chosen = Some(s.clone());
                     }
-                });
+                }
             });
 
         if let Some(title) = chosen {
+            // 改写正文：把 `[[frag` 替换为 `[[title]]`，并把光标落到新 `]]` 之后。
             let new_note = format!("{}{}]]{}", &body[..open + 2], title, &body[cursor_byte..]);
+            let new_cursor_char = new_note[..open + 2 + title.len() + 2].chars().count();
             self.graph_resource.with_resource(|g| {
                 if let Some(n) = g.get_node_mut(self.node_index) {
                     n.note = new_note;
                 }
             });
+            // 把光标移到补全后的 `]]` 之后，并让 TextEdit 重新持焦（点击候选项会把焦点移走）。
+            if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), br.id) {
+                let range =
+                    egui::text::CCursorRange::one(egui::text::CCursor::new(new_cursor_char));
+                state.cursor.set_char_range(Some(range));
+                state.store(ui.ctx(), br.id);
+            }
+            ui.ctx().memory_mut(|m| m.request_focus(br.id));
+            clear(ui.ctx());
+            return false;
         }
+
+        // 持久化高亮索引 + "popup 打开中"标志，供下一帧的键盘拦截使用。
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(sel_id, selected);
+            d.insert_temp(open_id, true);
+        });
+        true
     }
 }
 
