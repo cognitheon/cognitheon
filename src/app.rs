@@ -210,6 +210,171 @@ impl CognitheonApp {
         }
     }
 
+    /// 命令面板（全文搜索 / 快速跳转）。
+    ///
+    /// 状态全部存在 egui temp data（隐式状态总线约定），不进序列化：
+    /// - `command_palette_open` (`bool`)：开关
+    /// - `command_palette_query` (`String`)：搜索框文本
+    /// - `command_palette_sel` (`usize`)：高亮索引，随结果数量钳制
+    /// - `command_palette_just_opened` (`bool`)：仅"刚打开那帧"请求聚焦的一次性标记
+    ///
+    /// `Ctrl+P` 的截获与导航键（↑/↓/Enter/Esc）的消费都在 [`eframe::App::ui`] 顶部、
+    /// CentralPanel（画布 `state_manager`）渲染之前完成，故画布状态机当帧看不到这些键，
+    /// 不会与命令面板打架（尤其 Esc 不会既关面板又被状态机当成回 Idle/清选中双重触发）。
+    fn show_command_palette(&self, ctx: &egui::Context) {
+        let open_id = Id::new("command_palette_open");
+        let query_id = Id::new("command_palette_query");
+        let sel_id = Id::new("command_palette_sel");
+        let just_opened_id = Id::new("command_palette_just_opened");
+
+        if !ctx.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false) {
+            return;
+        }
+
+        let mut query: String = ctx
+            .data(|d| d.get_temp::<String>(query_id))
+            .unwrap_or_default();
+
+        // 搜索结果：复用 wikilink::search（标题+正文、大小写不敏感）。
+        // 空 query 时展示全部节点（按索引顺序），作为"快速跳转"列表。
+        let results: Vec<(petgraph::graph::NodeIndex, String, String)> =
+            self.graph_resource.read_resource(|g| {
+                let indices = if query.trim().is_empty() {
+                    g.graph.node_indices().collect::<Vec<_>>()
+                } else {
+                    wikilink::search(g, query.trim())
+                };
+                indices
+                    .into_iter()
+                    .filter_map(|i| g.get_node(i).map(|n| (i, n.text.clone(), n.note.clone())))
+                    .take(50)
+                    .collect()
+            });
+
+        // 高亮索引：持久化 + 按结果数量钳制（结果变化时不越界）。
+        let mut selected = ctx
+            .data(|d| d.get_temp::<usize>(sel_id))
+            .unwrap_or(0)
+            .min(results.len().saturating_sub(1));
+
+        // 导航键在面板打开时由它消费（赶在画布状态机前），避免泄漏到画布。
+        // Esc 关闭面板（不传给状态机）；↑/↓ 移动高亮；Enter 跳转高亮项。
+        let mut close = false;
+        let mut jump: Option<petgraph::graph::NodeIndex> = None;
+        ctx.input_mut(|i| {
+            if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
+                close = true;
+            }
+            if !results.is_empty() {
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
+                    selected = (selected + 1) % results.len();
+                }
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+                    selected = (selected + results.len() - 1) % results.len();
+                }
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
+                    jump = Some(results[selected].0);
+                }
+            }
+        });
+
+        let just_opened = ctx
+            .data_mut(|d| d.remove_temp::<bool>(just_opened_id))
+            .unwrap_or(false);
+
+        let mut query_changed = false;
+        egui::Area::new(Id::new("command_palette_area"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 80.0))
+            .movable(false)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style())
+                    .inner_margin(egui::Margin::same(8))
+                    .show(ui, |ui| {
+                        ui.set_width(480.0);
+
+                        let edit = ui.add(
+                            egui::TextEdit::singleline(&mut query)
+                                .hint_text("搜索节点（标题 / 正文）…")
+                                .desired_width(f32::INFINITY),
+                        );
+                        // 仅"刚打开那帧"请求一次焦点，避免每帧抢焦点。
+                        if just_opened {
+                            edit.request_focus();
+                        }
+                        if edit.changed() {
+                            query_changed = true;
+                        }
+
+                        ui.separator();
+
+                        if results.is_empty() {
+                            ui.weak("无匹配节点");
+                        } else {
+                            egui::ScrollArea::vertical()
+                                .max_height(360.0)
+                                .auto_shrink([false, true])
+                                .show(ui, |ui| {
+                                    for (row, (idx, title, note)) in results.iter().enumerate() {
+                                        let title_disp = if title.is_empty() {
+                                            "（无标题）"
+                                        } else {
+                                            title.as_str()
+                                        };
+                                        // 正文一行摘要：取首个非空行，截断。
+                                        let snippet = note
+                                            .lines()
+                                            .map(str::trim)
+                                            .find(|l| !l.is_empty())
+                                            .unwrap_or("");
+                                        let resp = ui
+                                            .selectable_label(
+                                                row == selected,
+                                                RichText::new(title_disp).strong(),
+                                            )
+                                            .on_hover_text(snippet);
+                                        if !snippet.is_empty() {
+                                            ui.indent(("cp_snip", row), |ui| {
+                                                let short: String =
+                                                    snippet.chars().take(80).collect();
+                                                ui.label(RichText::new(short).weak().small());
+                                            });
+                                        }
+                                        if resp.clicked() {
+                                            jump = Some(*idx);
+                                        }
+                                        ui.add_space(2.0);
+                                    }
+                                });
+                        }
+                    });
+            });
+
+        if query_changed {
+            // query 变化：写回并把高亮复位到第一项。
+            ctx.data_mut(|d| {
+                d.insert_temp(query_id, query.clone());
+                d.insert_temp(sel_id, 0usize);
+            });
+        } else {
+            ctx.data_mut(|d| d.insert_temp(sel_id, selected));
+        }
+
+        if let Some(idx) = jump {
+            self.focus_node(ctx, idx);
+            close = true;
+        }
+
+        if close {
+            ctx.data_mut(|d| {
+                d.remove::<bool>(open_id);
+                d.remove::<String>(query_id);
+                d.remove::<usize>(sel_id);
+                d.remove::<bool>(just_opened_id);
+            });
+        }
+    }
+
     /// 选中并把画布聚焦（居中）到某节点。
     fn focus_node(&self, ctx: &egui::Context, idx: petgraph::graph::NodeIndex) {
         let pos = self.graph_resource.with_resource(|g| {
@@ -265,6 +430,32 @@ impl eframe::App for CognitheonApp {
         //         );
         //     });
         // }
+        // 命令面板：Ctrl+P 开关。在任何面板（尤其画布 state_manager）渲染前截获并 consume，
+        // 避免快捷键泄漏到菜单栏 / 画布状态机。再次 Ctrl+P 关闭（Esc 关闭在面板内处理）。
+        let toggle_palette = ctx.input_mut(|i| {
+            i.consume_key(egui::Modifiers::COMMAND, egui::Key::P)
+                || i.consume_key(egui::Modifiers::CTRL, egui::Key::P)
+        });
+        if toggle_palette {
+            let open_id = Id::new("command_palette_open");
+            let now_open = !ctx.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+            ctx.data_mut(|d| {
+                d.insert_temp(open_id, now_open);
+                if now_open {
+                    // 仅在刚打开时标记请求聚焦，并复位 query / 高亮。
+                    d.insert_temp(Id::new("command_palette_just_opened"), true);
+                    d.insert_temp(Id::new("command_palette_query"), String::new());
+                    d.insert_temp(Id::new("command_palette_sel"), 0usize);
+                } else {
+                    d.remove::<String>(Id::new("command_palette_query"));
+                    d.remove::<usize>(Id::new("command_palette_sel"));
+                    d.remove::<bool>(Id::new("command_palette_just_opened"));
+                }
+            });
+        }
+        // 面板打开时，导航键（↑↓/Enter/Esc）在此 consume，赶在画布 state_manager 之前。
+        self.show_command_palette(&ctx);
+
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
 
