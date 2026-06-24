@@ -146,6 +146,27 @@ impl Graph {
         self.graph.contains_edge(src_node_index, dst_node_index)
     }
 
+    /// 删除 `source` 发出的**过时** wikilink 自动边（[`EdgeOrigin::Wiki`]）：目标不在 `keep` 集
+    /// 里的那些。返回删除的条数。
+    ///
+    /// 仅触碰 `Wiki` 边——手画的 [`EdgeOrigin::Manual`] 边永不被删。这是 `resolve_links` 把
+    /// "出链 wiki 边"做成 note 幂等投影的差量删除半步；命中 `keep` 的 wiki 边原地保留，
+    /// 其 `EdgeIndex` 不抖动。
+    pub fn remove_stale_wiki_edges_from(&mut self, source: NodeIndex, keep: &[NodeIndex]) -> usize {
+        use crate::graph::edge::EdgeOrigin;
+        // 先收集再删，避免在遍历期间结构性修改。EdgeIndex 在 StableGraph 下删边后保持稳定。
+        let to_remove: Vec<EdgeIndex> = self
+            .graph
+            .edges_directed(source, petgraph::Direction::Outgoing)
+            .filter(|e| e.weight().origin == EdgeOrigin::Wiki && !keep.contains(&e.target()))
+            .map(|e| e.id())
+            .collect();
+        for eidx in &to_remove {
+            self.graph.remove_edge(*eidx);
+        }
+        to_remove.len()
+    }
+
     pub fn edge_count_undirected(&self, node1_index: NodeIndex, node2_index: NodeIndex) -> usize {
         self.graph
             .edge_references()

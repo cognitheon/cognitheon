@@ -53,10 +53,17 @@ pub struct ResolveOutcome {
     pub ambiguous: Vec<String>,
 }
 
-/// 把 `source` 节点正文里的 `[[标题]]` 落到图上。
+/// 把 `source` 节点正文里的 `[[标题]]` 幂等投影到图上（wiki 自动边 = note 的投影）。
 ///
-/// 对每个标题：找到同名节点则复用，否则在 source 附近新建一个；随后确保存在 `source -> target` 的边
-/// （已存在则不重复建、不自指）。返回新建的节点与边数，供调用方反馈/测试断言。
+/// 算法是一次**差量同步**（而非粗暴的"全删全建"，以保持未变链接的 `EdgeIndex` 稳定）：
+/// 1. 解析正文 `[[标题]]` → 解析出每个目标节点（同名则复用、缺失则在 source 附近新建）；
+/// 2. **删除过时**：删掉 `source` 发出、但目标已不在当前期望集里的 wiki 边（`EdgeOrigin::Wiki`）；
+/// 3. **补齐缺失**：为期望集里尚无边的目标新建 wiki 边。
+///
+/// 手画的 `EdgeOrigin::Manual` 边**绝不被触碰**。`created_edges` 只计本次**真正新建**的 wiki 边。
+///
+/// 幂等性：对同一 note 连续调用两次，节点集与 wiki 边集一致，第二次 `created_nodes` /
+/// `created_edges` 均为 0、不重复建边、不抖动 `EdgeIndex`。
 pub fn resolve_links(
     graph: &mut Graph,
     canvas: &CanvasStateResource,
@@ -69,6 +76,8 @@ pub fn resolve_links(
         None => return outcome,
     };
 
+    // 1. 解析正文每个标题为目标节点（缺失则新建），得到本次正文期望连到的目标集合。
+    let mut desired: Vec<NodeIndex> = Vec::new();
     for (i, title) in parse_links(&body).into_iter().enumerate() {
         let matches: Vec<NodeIndex> = graph
             .graph
@@ -99,9 +108,19 @@ pub fn resolve_links(
             idx
         };
 
-        if source != target && !graph.edge_exists(source, target) {
+        if target != source && !desired.contains(&target) {
+            desired.push(target);
+        }
+    }
+
+    // 2. 删除过时的 wiki 边：source 发出、目标不在期望集里的那些。
+    graph.remove_stale_wiki_edges_from(source, &desired);
+
+    // 3. 补齐缺失：期望目标尚无边（手画或 wiki）则建一条 wiki 边。
+    for target in desired {
+        if !graph.edge_exists(source, target) {
             let target_pos = graph.get_node(target).map_or(source_pos, |n| n.position);
-            graph.add_edge(Edge::new(
+            graph.add_edge(Edge::new_wiki(
                 source,
                 target,
                 source_pos,
@@ -318,6 +337,124 @@ mod tests {
         let (g, _c) = graph_with(&["Hello World"]);
         assert_eq!(search(&g, "hello").len(), 1);
         assert_eq!(search(&g, "WORLD").len(), 1);
+    }
+
+    /// 收集 `source` 当前的出边来源标记，用于断言 wiki/manual 边集。
+    fn out_edges(g: &Graph, source: NodeIndex) -> Vec<crate::graph::edge::EdgeOrigin> {
+        g.graph
+            .edges_directed(source, petgraph::Direction::Outgoing)
+            .map(|e| e.weight().origin)
+            .collect()
+    }
+
+    #[test]
+    fn resolve_removes_stale_wiki_edge_when_link_dropped() {
+        use crate::graph::edge::EdgeOrigin;
+        let (mut g, canvas) = graph_with(&["A", "B", "C"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+
+        // 第一次：A 正文链向 B 与 C，建两条 wiki 边
+        g.get_node_mut(a).unwrap().note = "[[B]] [[C]]".to_owned();
+        resolve_links(&mut g, &canvas, a);
+        assert_eq!(g.graph.edges(a).count(), 2, "应有两条出边");
+        assert!(out_edges(&g, a).iter().all(|o| *o == EdgeOrigin::Wiki));
+
+        // 删掉 [[C]]，只留 [[B]]：再 resolve 后过时的 A->C wiki 边应消失
+        g.get_node_mut(a).unwrap().note = "[[B]]".to_owned();
+        resolve_links(&mut g, &canvas, a);
+        assert_eq!(g.graph.edges(a).count(), 1, "过时 wiki 边应被删除");
+        assert!(g.edge_exists(a, b), "A->B 应保留");
+        let c = find_by_title(&g, "C").unwrap();
+        assert!(!g.edge_exists(a, c), "A->C 应已删除");
+    }
+
+    #[test]
+    fn resolve_does_not_remove_manual_edges() {
+        use crate::graph::edge::{Edge, EdgeOrigin};
+        let (mut g, canvas) = graph_with(&["A", "B", "C"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        let c = find_by_title(&g, "C").unwrap();
+
+        // 用户手画 A->B（Manual），且 A 正文链向 C（Wiki）
+        g.add_edge(Edge::new(
+            a,
+            b,
+            egui::pos2(0.0, 0.0),
+            egui::pos2(0.0, 0.0),
+            canvas.clone(),
+        ));
+        g.get_node_mut(a).unwrap().note = "[[C]]".to_owned();
+        resolve_links(&mut g, &canvas, a);
+        assert!(g.edge_exists(a, c), "wiki 边 A->C 应建立");
+
+        // 清空正文再 resolve：手画 A->B 必须保留，wiki A->C 必须消失
+        g.get_node_mut(a).unwrap().note = String::new();
+        resolve_links(&mut g, &canvas, a);
+        let origins = out_edges(&g, a);
+        assert_eq!(origins, vec![EdgeOrigin::Manual], "只剩手画的 A->B");
+        assert!(g.edge_exists(a, b), "手画边 A->B 永不被删");
+        assert!(!g.edge_exists(a, c), "wiki 边 A->C 应被删");
+    }
+
+    #[test]
+    fn resolve_wiki_edge_set_is_idempotent() {
+        let (mut g, canvas) = graph_with(&["A", "B", "C"]);
+        let a = find_by_title(&g, "A").unwrap();
+        g.get_node_mut(a).unwrap().note = "[[B]] [[C]]".to_owned();
+
+        resolve_links(&mut g, &canvas, a);
+        let edges_after_first = g.graph.edge_count();
+
+        // 连续两次：边集不抖动、不重复建
+        let second = resolve_links(&mut g, &canvas, a);
+        assert_eq!(second.created_edges, 0, "第二次不应新建边");
+        assert!(second.created_nodes.is_empty(), "第二次不应新建节点");
+        assert_eq!(
+            g.graph.edge_count(),
+            edges_after_first,
+            "wiki 边集应稳定（幂等）"
+        );
+        assert_eq!(g.graph.edges(a).count(), 2);
+    }
+
+    #[test]
+    fn old_archive_edge_defaults_manual_and_survives_resolve() {
+        use crate::graph::edge::{Edge, EdgeOrigin};
+        let (mut g, canvas) = graph_with(&["A", "B"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+
+        // 构造一条真实的边并序列化，再从 JSON 中剥掉 `origin` 字段，模拟旧 .cnt（无该字段）。
+        // 用真实 serde 形状（而非手写 JSON）避免脆弱性。
+        let edge = Edge::new(
+            a,
+            b,
+            egui::pos2(0.0, 0.0),
+            egui::pos2(0.0, 0.0),
+            canvas.clone(),
+        );
+        let mut value: serde_json::Value = serde_json::to_value(&edge).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("origin")
+            .expect("新边序列化应含 origin 字段");
+
+        // 旧档（无 origin）反序列化应默认 Manual
+        let old_edge: Edge = serde_json::from_value(value).expect("旧档边应能反序列化");
+        assert_eq!(
+            old_edge.origin,
+            EdgeOrigin::Manual,
+            "缺 origin 字段应默认 Manual"
+        );
+
+        // 旧档里的边落到图上后，resolve 不应误删它
+        g.add_edge(old_edge);
+        g.get_node_mut(a).unwrap().note = String::new();
+        resolve_links(&mut g, &canvas, a);
+        assert!(g.edge_exists(a, b), "旧档手画边永不被 resolve 删除");
     }
 
     #[test]

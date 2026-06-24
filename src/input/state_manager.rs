@@ -140,6 +140,10 @@ pub struct InputStateManager {
 
     /// 上一次记录的输入目标
     pub last_target: Option<InputTarget>,
+
+    /// 上一帧的 `editing_node`，用于检测"退出编辑"的边沿（`Some(x) -> 非 x`）。
+    /// 退出编辑是 wikilink `resolve_links` 的统一触发时机（§3.4：输入逻辑只在本文件驱动）。
+    prev_editing_node: Option<NodeIndex>,
 }
 
 impl InputStateManager {
@@ -148,6 +152,7 @@ impl InputStateManager {
             current_state: InputState::Idle,
             context: InputContext::new(graph_resource, canvas_state_resource),
             last_target: None,
+            prev_editing_node: None,
         }
     }
 
@@ -183,6 +188,37 @@ impl InputStateManager {
 
         // 处理状态特定的每帧逻辑
         self.handle_state_specific_updates(ui);
+
+        // 退出编辑边沿检测：把"editing_node 从 Some(x) 变为非 x"作为 resolve 的统一触发时机，
+        // 收口所有退出路径（Idle 每帧清空、Escape、点击空白/其它节点、Ctrl+Enter）。
+        // 只在真正退出那一帧对刚退出的节点 resolve 一次，不每帧重复。
+        self.resolve_on_exit_edit();
+    }
+
+    /// 检测 `editing_node` 的退出边沿并对刚退出的节点触发 wikilink 投影。
+    ///
+    /// `prev` 与当前帧的 `editing_node` 比较：若 `prev = Some(x)` 且当前不再是 `x`
+    /// （变成 `None` 或换到了别的节点），说明 `x` 退出了编辑——此时把 `x` 正文里的
+    /// `[[标题]]` 幂等投影到图上（先清旧 wiki 边再按当前正文重建）。
+    fn resolve_on_exit_edit(&mut self) {
+        let current = self
+            .context
+            .graph_resource
+            .read_resource(|g| g.get_editing_node());
+
+        if let Some(exited) = self.prev_editing_node {
+            if current != Some(exited) {
+                self.context.graph_resource.with_resource(|graph| {
+                    crate::wikilink::resolve_links(
+                        graph,
+                        &self.context.canvas_state_resource,
+                        exited,
+                    );
+                });
+            }
+        }
+
+        self.prev_editing_node = current;
     }
 
     /// 处理可能触发状态转换的一次性事件
