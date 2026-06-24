@@ -10,6 +10,7 @@ use crate::resource::{CanvasStateResource, GraphResource, ParticleSystemResource
 // use crate::globals::{CanvasStateResource, GraphResource};
 use crate::gpu_render::particle::particle_system::ParticleSystem;
 use crate::graph::edge::EdgeType;
+use crate::graph::layout::{self, LayoutParams};
 use crate::input::state_manager::InputStateManager;
 use crate::ui::canvas::data::CanvasWidget;
 use crate::wikilink;
@@ -375,6 +376,44 @@ impl CognitheonApp {
         }
     }
 
+    /// 缩放/平移画布到能看见全部节点（zoom-to-fit）。
+    ///
+    /// 计算所有节点位置（画布坐标，AGENTS.md §3.2）的包围盒，求出让它带边距铺满视口的
+    /// 缩放与平移，写回 `CanvasState.transform`（坐标变换的唯一权威）。缩放钳到 §3.2 的 `[0.1, 100]`。
+    /// 空图 / 无节点时不动。
+    fn zoom_to_fit(&self, ctx: &egui::Context) {
+        let bbox = self.graph_resource.read_resource(|g| {
+            let mut it = g.graph.node_indices().map(|i| g.graph[i].position);
+            let first = it.next()?;
+            let mut rect = egui::Rect::from_min_max(first, first);
+            for p in it {
+                rect = rect.union(egui::Rect::from_min_max(p, p));
+            }
+            Some(rect)
+        });
+        let Some(bbox) = bbox else {
+            return;
+        };
+
+        let view = ctx.content_rect();
+        if view.width() <= 0.0 || view.height() <= 0.0 {
+            return;
+        }
+
+        // 给包围盒留出边距，并兜底一个最小尺寸（单节点 / 共线时 width/height 可能为 0）。
+        let content_w = bbox.width().max(1.0) + 320.0;
+        let content_h = bbox.height().max(1.0) + 320.0;
+        let margin = 0.9; // 视口利用率，留白
+        let scale =
+            ((view.width() / content_w).min(view.height() / content_h) * margin).clamp(0.1, 100.0);
+
+        // 让包围盒中心落到视口中心：screen = scale * canvas + translation。
+        let translation = view.center().to_vec2() - scale * bbox.center().to_vec2();
+        self.canvas_resource.with_resource(|cs| {
+            cs.transform = egui::emath::TSTransform::new(translation, scale);
+        });
+    }
+
     /// 选中并把画布聚焦（居中）到某节点。
     fn focus_node(&self, ctx: &egui::Context, idx: petgraph::graph::NodeIndex) {
         let pos = self.graph_resource.with_resource(|g| {
@@ -548,6 +587,20 @@ impl eframe::App for CognitheonApp {
                     // egui::Window::new("test").show(ctx, |ui| {
                     //     ui.label("test");
                     // });
+                }
+
+                // 一键力导向布局：按连接关系把图自然铺开，随后缩放/平移到能看见全部节点。
+                if ui
+                    .button("整理布局")
+                    .on_hover_text("力导向自动布局：相连节点靠近、不相连分散")
+                    .clicked()
+                {
+                    let affected = self.graph_resource.with_resource(|graph| {
+                        layout::layout_graph(graph, LayoutParams::default())
+                    });
+                    log::info!("force-directed layout applied to {affected} nodes");
+                    // 加分项：布局后缩放/平移到能看见全部节点（zoom-to-fit）。
+                    self.zoom_to_fit(&ctx);
                 }
 
                 let mut edge_type = self
