@@ -33,6 +33,43 @@ pub fn node_border_hit(_theme: egui::Theme) -> egui::Color32 {
     egui::Color32::from_rgba_premultiplied(240, 184, 40, 230)
 }
 
+/// 结构着色（按度数编码节点枢纽程度）的色阶：归一度数比 `ratio`（0~1）→ 冷→暖渐变色。
+///
+/// 把不可见的图结构（节点度数 / 枢纽程度）映射到外框颜色：
+/// - `ratio == 0`（最低度数档）→ 冷色（蓝青）；
+/// - `ratio == 1`（最高度数 = 全图枢纽）→ 暖色（橙红）；
+/// - 中间线性插值（在 sRGB 分量上插，足够直观、无需 OKLab）。
+///
+/// `ratio` 由调用方按 `degree / max_degree` 算好并 `clamp(0,1)`（`max_degree == 0` 时全传 0、
+/// 走最低档，避免除零）。**孤立节点（度数 0）不走本函数**——另用 [`structure_isolated`]
+/// 的弱化色 + 虚线，区别于"低度但非孤立"。两主题统一色相、仅按明暗微调饱和度/亮度以保证可读。
+pub fn structure_degree(theme: egui::Theme, ratio: f32) -> egui::Color32 {
+    let t = ratio.clamp(0.0, 1.0);
+    // 冷端（低度）与暖端（高度）的 RGB 锚点；暗色主题整体提亮以在深色卡片/网格上可辨。
+    let (cold, warm) = if theme == egui::Theme::Light {
+        ([30u8, 110u8, 180u8], [210u8, 70u8, 40u8])
+    } else {
+        ([70u8, 150u8, 220u8], [240u8, 120u8, 60u8])
+    };
+    let lerp = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
+    egui::Color32::from_rgba_premultiplied(
+        lerp(cold[0], warm[0]),
+        lerp(cold[1], warm[1]),
+        lerp(cold[2], warm[2]),
+        220,
+    )
+}
+
+/// 结构着色下**孤立节点（度数 0）**的外框色——弱化的中性灰（配合虚线绘制），明确区别于
+/// "低度但有连接"的冷色：度数 0 = 图里的盲点，刻意画得最不显眼。两主题分浅/深。
+pub fn structure_isolated(theme: egui::Theme) -> egui::Color32 {
+    if theme == egui::Theme::Light {
+        egui::Color32::from_rgba_premultiplied(150, 150, 155, 150)
+    } else {
+        egui::Color32::from_rgba_premultiplied(120, 120, 125, 150)
+    }
+}
+
 pub fn node_background(theme: egui::Theme) -> egui::Color32 {
     if theme == egui::Theme::Light {
         egui::Color32::from_rgba_premultiplied(180, 180, 180, 200)
@@ -121,4 +158,27 @@ pub fn minimap_viewport_stroke(_theme: egui::Theme) -> egui::Color32 {
 /// 小地图视口框极淡填充——提示"当前视野范围"但不挡住底下的节点点。两主题统一。
 pub fn minimap_viewport_fill(_theme: egui::Theme) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(230, 130, 60, 28)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 结构着色色阶：ratio 端点 = 冷/暖锚点；clamp 越界；中点在两端之间单调过渡。
+    #[test]
+    fn structure_degree_endpoints_and_clamp() {
+        for theme in [egui::Theme::Light, egui::Theme::Dark] {
+            let cold = structure_degree(theme, 0.0);
+            let warm = structure_degree(theme, 1.0);
+            // 暖端比冷端更"红"、更不"蓝"（冷→暖 = 蓝青→橙红）。
+            assert!(warm.r() > cold.r(), "暖端红分量应更大");
+            assert!(warm.b() < cold.b(), "暖端蓝分量应更小");
+            // clamp：越界 ratio 退化到端点。
+            assert_eq!(structure_degree(theme, -1.0), cold, "负 ratio 截到冷端");
+            assert_eq!(structure_degree(theme, 2.0), warm, "超界 ratio 截到暖端");
+            // 中点红分量落在两端之间（单调插值）。
+            let mid = structure_degree(theme, 0.5);
+            assert!(mid.r() > cold.r() && mid.r() < warm.r(), "中点红分量居中");
+        }
+    }
 }

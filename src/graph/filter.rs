@@ -32,6 +32,13 @@ pub const FILTER_QUERY_KEY: &str = "filter_query";
 pub const FILTER_MODE_KEY: &str = "filter_mode";
 /// 「邻居聚焦」开关的 temp data key（纯 UI、不序列化）。
 pub const FOCUS_ENABLED_KEY: &str = "neighbor_focus_enabled";
+/// 「结构着色」开关的 temp data key（纯 UI、不序列化；默认关）。
+pub const STRUCTURE_COLORING_KEY: &str = "structure_coloring_enabled";
+/// 本帧算好的"全图最大度数"的 temp data key（[`render_graph`] 入口算一次、`NodeWidget` 反读）。
+///
+/// 结构着色把每节点度数按 `degree / max_degree` 归一到色阶 / 框宽。集中算一次避免每节点各扫
+/// 全图的 `O(N²)`（仿可见度快照的"入口算、widget 反读"范式）。
+const STRUCTURE_MAX_DEGREE_KEY: &str = "structure_max_degree";
 /// 本帧算好的"可见度快照"的 temp data key（[`render_graph`] 入口写、各 widget 反读）。
 const FILTER_VISIBILITY_KEY: &str = "filter_visibility";
 
@@ -110,6 +117,38 @@ pub fn focus_enabled(ctx: &egui::Context) -> bool {
 /// 写回「邻居聚焦」开关状态。
 pub fn set_focus_enabled(ctx: &egui::Context, enabled: bool) {
     ctx.data_mut(|d| d.insert_temp(Id::new(FOCUS_ENABLED_KEY), enabled));
+}
+
+/// 读取「结构着色」开关状态，无则默认 `false`（默认关，保持现有干净外观）。
+pub fn structure_coloring_enabled(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(Id::new(STRUCTURE_COLORING_KEY)))
+        .unwrap_or(false)
+}
+
+/// 写回「结构着色」开关状态。
+pub fn set_structure_coloring_enabled(ctx: &egui::Context, enabled: bool) {
+    ctx.data_mut(|d| d.insert_temp(Id::new(STRUCTURE_COLORING_KEY), enabled));
+}
+
+/// 在 `render_graph` 入口算一次全图最大度数并发布到 temp data（仅当结构着色开启时才计算，
+/// 关闭时不做无谓全图扫描）。`NodeWidget` 渲染时经 [`structure_max_degree`] 反读，按
+/// `degree / max_degree` 归一化自身度数到色阶 / 框宽。§3.1：图只读经调用方 `read_resource`
+/// 闭包（作用域 = 锁作用域），闭包内不再取同一锁。
+pub fn publish_structure_max_degree(ctx: &egui::Context, graph: &Graph) {
+    if !structure_coloring_enabled(ctx) {
+        // 关闭时清掉上一帧残留，避免开关切回时读到陈旧值。
+        ctx.data_mut(|d| d.remove::<usize>(Id::new(STRUCTURE_MAX_DEGREE_KEY)));
+        return;
+    }
+    let max = crate::wikilink::max_degree(graph);
+    ctx.data_mut(|d| d.insert_temp(Id::new(STRUCTURE_MAX_DEGREE_KEY), max));
+}
+
+/// 反读本帧全图最大度数（结构着色归一化基准）。缺失（结构着色关闭 / 首帧未发布）返回 `0`
+/// —— 调用方对 `max_degree == 0` 做除零兜底（全按最低档）。
+pub fn structure_max_degree(ctx: &egui::Context) -> usize {
+    ctx.data(|d| d.get_temp::<usize>(Id::new(STRUCTURE_MAX_DEGREE_KEY)))
+        .unwrap_or(0)
 }
 
 /// 在 `render_graph` 入口算一次本帧可见度快照（过滤规则 + 邻居聚焦规则【合成】）并发布到 temp data。

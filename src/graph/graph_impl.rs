@@ -265,6 +265,9 @@ pub fn render_graph(
     // read_resource 闭包（作用域 = 锁作用域），闭包内不再取同一锁。
     graph_resource.read_resource(|graph| {
         crate::graph::filter::publish_filter_visibility(ui.ctx(), graph);
+        // 结构着色：开启时在此一处算一次全图最大度数（归一化基准）写 temp data，NodeWidget
+        // 反读自身度数按 degree/max 归一——避免每节点各扫全图的 O(N²)（仿可见度快照范式）。
+        crate::graph::filter::publish_structure_max_degree(ui.ctx(), graph);
     });
 
     let node_indices = graph_resource

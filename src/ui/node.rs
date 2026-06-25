@@ -445,6 +445,51 @@ impl Widget for NodeWidget {
                 c
             }
         };
+
+        // 结构着色（按度数编码节点枢纽程度，默认关）：开启时把"度数映射的颜色 + 宽度"画成卡片
+        // **内侧**一圈描边（StrokeKind::Inside，纯 painter 绘制、不参与布局 → 不挤内容、不颤动，
+        // §3.3 绝不动 Frame.stroke / 卡片尺寸）。层叠规则：度数框占**内圈**（贴卡片边内侧），
+        // 选中红环 / 命中金环占**外圈**（rect 外侧）——三者天然分占内/外、互不遮挡，选中/命中
+        // 语义始终在最外、优先级最高，孤立/枢纽的结构色只作底层环境信息。Dim 态下结构色同步淡化
+        // （dim_if），与现有 dim 一致。框宽用固定像素（不 ×scaling）：与同卡片的选中/命中环一致——
+        // 卡片是固定像素尺寸（CARD_WIDTH 刻意不随画布缩放，见上方 Frame 注释），随 scaling 放大框宽
+        // 反会溢出固定大小的卡片（§3.2 的 ×scaling 只适用于随画布缩放的画布空间元素）。
+        if crate::graph::filter::structure_coloring_enabled(ui.ctx()) {
+            // 度数读经 read_resource（§3.1 纯拓扑查询）；max_degree 在 render_graph 入口算一次经
+            // temp data 下发（§3.3，避免每节点各扫全图的 O(N²)）。
+            let degree = self
+                .graph_resource
+                .read_resource(|g| crate::wikilink::node_degree(g, self.node_index));
+            let max_degree = crate::graph::filter::structure_max_degree(ui.ctx());
+
+            if degree == 0 {
+                // 孤立节点（度数 0）：弱化的虚线内框，刻意最不显眼——它是图里的盲点。
+                // 复用既有 draw_dashed_rect 助手（§5：走当前生效实现，不另造轮子）；略内缩半线宽
+                // 画在卡片内侧、不出框。
+                crate::ui::helpers::draw_dashed_rect(
+                    ui.painter(),
+                    rect.shrink(0.5),
+                    Stroke::new(1.0, dim_if(crate::colors::structure_isolated(theme))),
+                    4.0, // dash 长
+                    3.0, // gap 长
+                );
+            } else {
+                // 归一化 degree/max → 色阶（冷→暖）+ 框宽（细→粗）。max_degree==0 兜底：
+                // 结构着色开启但全图无边时不会进此分支（degree 必为 0）；仍防御性 max(1)。
+                let ratio = degree as f32 / (max_degree.max(1)) as f32;
+                let color = dim_if(crate::colors::structure_degree(theme, ratio));
+                // 框宽 1.5~4.0px 随度数比线性增长（低度细、高度粗）。
+                let width = 1.5 + ratio.clamp(0.0, 1.0) * 2.5;
+                // 画在卡片内侧（Inside），半径与 Frame 圆角 6 对齐、贴边内缩半个线宽以同心。
+                ui.painter().rect_stroke(
+                    rect.shrink(width * 0.5),
+                    6.0,
+                    Stroke::new(width, color),
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
+
         if is_hit {
             let hit_rect = rect.expand(3.0);
             ui.painter().rect_stroke(

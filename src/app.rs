@@ -552,6 +552,20 @@ impl CognitheonApp {
         {
             crate::graph::filter::set_focus_enabled(&ctx, focus);
         }
+
+        ui.add_space(8.0);
+
+        // 结构着色开关（默认关，保持现有干净外观）：ON 时按节点度数给外框上色/调宽——低度冷色细框、
+        // 高度暖色粗框、孤立（度数 0）弱化虚线框。归一化基准 max_degree 在 render_graph 入口算一次
+        // 经 temp data 下发，NodeWidget 反读自身度数渲染。纯 UI / temp data，不进 history / 序列化。
+        let mut structure = crate::graph::filter::structure_coloring_enabled(&ctx);
+        if ui
+            .checkbox(&mut structure, "结构着色")
+            .on_hover_text("按节点度数给外框上色/调宽：低度冷细、高度暖粗、孤立弱化虚线")
+            .changed()
+        {
+            crate::graph::filter::set_structure_coloring_enabled(&ctx, structure);
+        }
     }
 
     /// 命令面板（全文搜索 / 快速跳转）。

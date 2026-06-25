@@ -273,6 +273,45 @@ pub fn orphan_nodes(graph: &Graph) -> Vec<NodeIndex> {
         .collect()
 }
 
+/// 节点的**无向度数**：该节点的边关联次数（出边数 + 入边数），纯拓扑。
+///
+/// "结构着色"（按枢纽程度编码节点外观）的数据源——度数越高越是图的枢纽。判定与
+/// [`orphan_nodes`] **同口径**走 `edges_directed(Incoming/Outgoing)`（而非 `neighbors_undirected`：
+/// 后者的 `skip_start` 会把自环去重为 1 个邻居、低估自环节点的边数），§3.3 用 `NodeIndex` 句柄、
+/// 不依赖几何 observer、无一帧延迟。
+///
+/// 语义（= 标准图论"边关联度数"）：
+/// - 孤立节点（无任何边）→ `0`。
+/// - 链端 → `1`；链中 → `2`；星心（连 n 个叶）→ `n`。
+/// - **自环**：一条自环边同时出现在该节点的入边与出边里，故对度数贡献 **2**——与"无向图里
+///   自环度数计 2"的标准约定一致，也与 [`orphan_nodes`] 的自环判定（入/出任一非空即有边）自洽。
+/// - 多重边（两节点间多条边）逐条计数。
+/// - `node` 已失效（被删）→ `0`（`edges_directed` 对悬空索引产出空迭代器、不 panic）。
+pub fn node_degree(graph: &Graph, node: NodeIndex) -> usize {
+    graph
+        .graph
+        .edges_directed(node, petgraph::Direction::Outgoing)
+        .count()
+        + graph
+            .graph
+            .edges_directed(node, petgraph::Direction::Incoming)
+            .count()
+}
+
+/// 全图**最大无向度数**（归一化基准）。空图 / 全孤立图返回 `0`。
+///
+/// "结构着色"把每个节点的度数按 `degree / max_degree` 归一到色阶 / 框宽；调用方须对
+/// `max_degree == 0` 做除零兜底（全按最低档）。集中算一次（在 `render_graph` 入口经 temp data
+/// 下发），避免每节点各扫全图的 `O(N²)`。纯函数、可无头单测。
+pub fn max_degree(graph: &Graph) -> usize {
+    graph
+        .graph
+        .node_indices()
+        .map(|idx| node_degree(graph, idx))
+        .max()
+        .unwrap_or(0)
+}
+
 /// 以 `center` 为中心、半径 `hops` 跳的**邻域节点集**（含 `center` 自身），纯拓扑、不依赖几何。
 ///
 /// "邻居聚焦"的数据源（Obsidian 局部图谱同理）：选中一个节点时，把它 + `hops` 跳内可达的邻居高亮、
@@ -577,6 +616,117 @@ mod tests {
         let eidx = g.graph.edge_indices().next().unwrap();
         g.graph.remove_edge(eidx);
         assert_eq!(orphan_nodes(&g), vec![a, b], "删边后两端都回到孤立");
+    }
+
+    // ===== 节点度数 node_degree / max_degree（结构着色数据源）=====
+
+    #[test]
+    fn node_degree_isolated_is_zero() {
+        // 孤立节点（无任何边）度数为 0；空图 max_degree 为 0。
+        let (g_empty, _c0) = graph_with(&[]);
+        assert_eq!(max_degree(&g_empty), 0, "空图最大度数为 0");
+
+        let (g, _c) = graph_with(&["A", "B"]);
+        let a = find_by_title(&g, "A").unwrap();
+        assert_eq!(node_degree(&g, a), 0);
+        assert_eq!(max_degree(&g), 0, "全孤立图最大度数为 0");
+    }
+
+    #[test]
+    fn node_degree_chain_ends_and_middle() {
+        // 链 A - B - C：端点度数 1、链中度数 2，max_degree = 2。
+        let (mut g, canvas) = graph_with(&["A", "B", "C"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        let c = find_by_title(&g, "C").unwrap();
+        g.add_edge(Edge::new(
+            a,
+            b,
+            egui::pos2(0.0, 0.0),
+            egui::pos2(0.0, 0.0),
+            canvas.clone(),
+        ));
+        g.add_edge(Edge::new(
+            b,
+            c,
+            egui::pos2(0.0, 0.0),
+            egui::pos2(0.0, 0.0),
+            canvas.clone(),
+        ));
+        assert_eq!(node_degree(&g, a), 1, "链端度数 1");
+        assert_eq!(node_degree(&g, c), 1, "链端度数 1");
+        assert_eq!(node_degree(&g, b), 2, "链中度数 2");
+        assert_eq!(max_degree(&g), 2);
+    }
+
+    #[test]
+    fn node_degree_star_center_is_leaf_count() {
+        // 星形：中心连 3 个叶 → 中心度数 3、各叶度数 1，max_degree = 3。
+        let (mut g, canvas) = graph_with(&["C", "L1", "L2", "L3"]);
+        let center = find_by_title(&g, "C").unwrap();
+        for leaf in ["L1", "L2", "L3"] {
+            let l = find_by_title(&g, leaf).unwrap();
+            g.add_edge(Edge::new(
+                center,
+                l,
+                egui::pos2(0.0, 0.0),
+                egui::pos2(0.0, 0.0),
+                canvas.clone(),
+            ));
+        }
+        assert_eq!(node_degree(&g, center), 3, "星心度数 = 叶数");
+        for leaf in ["L1", "L2", "L3"] {
+            let l = find_by_title(&g, leaf).unwrap();
+            assert_eq!(node_degree(&g, l), 1, "叶节点度数 1");
+        }
+        assert_eq!(max_degree(&g), 3);
+    }
+
+    #[test]
+    fn node_degree_self_loop_counts_two() {
+        // 自环：neighbors_undirected 把自环边产出两次 → 度数 +2（无向图自环计 2 的标准约定）。
+        let (mut g, canvas) = graph_with(&["A", "B"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        g.add_edge(Edge::new(
+            a,
+            a,
+            egui::pos2(0.0, 0.0),
+            egui::pos2(0.0, 0.0),
+            canvas.clone(),
+        ));
+        assert_eq!(node_degree(&g, a), 2, "一条自环对度数贡献 2");
+        assert_eq!(node_degree(&g, b), 0, "B 仍孤立");
+        assert_eq!(max_degree(&g), 2);
+    }
+
+    #[test]
+    fn node_degree_multi_edge_counts_each() {
+        // 多重边：A、B 间两条边 → 两端度数各 2（逐条计数）。
+        let (mut g, canvas) = graph_with(&["A", "B"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        for _ in 0..2 {
+            g.add_edge(Edge::new(
+                a,
+                b,
+                egui::pos2(0.0, 0.0),
+                egui::pos2(0.0, 0.0),
+                canvas.clone(),
+            ));
+        }
+        assert_eq!(node_degree(&g, a), 2, "多重边逐条计数");
+        assert_eq!(node_degree(&g, b), 2);
+        assert_eq!(max_degree(&g), 2);
+    }
+
+    #[test]
+    fn node_degree_stale_index_is_zero() {
+        // 已删节点（悬空索引）度数为 0、不 panic（§3.3 容错）。
+        let (mut g, _c) = graph_with(&["A"]);
+        let a = find_by_title(&g, "A").unwrap();
+        g.remove_node(a);
+        assert_eq!(node_degree(&g, a), 0);
     }
 
     // ===== 邻域聚焦 neighborhood =====
