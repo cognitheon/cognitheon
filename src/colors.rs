@@ -52,3 +52,21 @@ pub fn edge_hover(_theme: egui::Theme) -> egui::Color32 {
 pub fn edge_selected(_theme: egui::Theme) -> egui::Color32 {
     egui::Color32::from_rgba_premultiplied(222, 78, 78, 230)
 }
+
+/// 边标签文字颜色——比默认灰边线更亮、保证在边线/网格上可读。两主题各取高对比前景色。
+pub fn edge_label_text(theme: egui::Theme) -> egui::Color32 {
+    if theme == egui::Theme::Light {
+        egui::Color32::from_rgb(40, 40, 40)
+    } else {
+        egui::Color32::from_rgb(230, 230, 230)
+    }
+}
+
+/// 边标签背景小色块——半透明垫底，让文字脱离边线/网格背景而清晰可读。两主题分别用浅/深底。
+pub fn edge_label_bg(theme: egui::Theme) -> egui::Color32 {
+    if theme == egui::Theme::Light {
+        egui::Color32::from_rgba_premultiplied(235, 235, 235, 215)
+    } else {
+        egui::Color32::from_rgba_premultiplied(45, 45, 45, 215)
+    }
+}

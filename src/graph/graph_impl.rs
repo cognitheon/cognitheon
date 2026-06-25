@@ -76,6 +76,15 @@ impl Graph {
         }
     }
 
+    /// 当前选中的边（选区类型非 Edge 时返回空）。与 [`Self::get_selected_nodes`] 对称，
+    /// 供右侧面板按"恰好选中一条边"展示标签编辑用。
+    pub fn get_selected_edges(&self) -> Vec<EdgeIndex> {
+        match &self.selected {
+            GraphSelection::Edge(edges) => edges.clone(),
+            _ => vec![],
+        }
+    }
+
     pub fn is_node_selected(&self, node_index: NodeIndex) -> bool {
         match &self.selected {
             GraphSelection::Node(nodes) => nodes.contains(&node_index),
@@ -190,6 +199,14 @@ impl Graph {
     pub fn update_line_edge(&mut self, edge_index: EdgeIndex, line_edge: LineEdge) {
         let edge = self.graph.edge_weight_mut(edge_index).unwrap();
         edge.line_edge = line_edge;
+    }
+
+    /// 写回一条边的标签文本（空 → `None`，归一为"无标签"）。§3.3 失效容错：边已被删则静默跳过、
+    /// 不 panic（不同于上面两个 `unwrap` 的几何回写——标签编辑入口可能持有失效选区）。
+    pub fn update_edge_text(&mut self, edge_index: EdgeIndex, text: Option<String>) {
+        if let Some(edge) = self.graph.edge_weight_mut(edge_index) {
+            edge.text = text;
+        }
     }
 
     pub fn edge_exists(&self, src_node_index: NodeIndex, dst_node_index: NodeIndex) -> bool {

@@ -251,6 +251,15 @@ impl CognitheonApp {
         ui.heading("链接");
         ui.separator();
 
+        // 选中边时：展示边标签编辑（恰好一条）或「选中 N 条边」提示（多条）。优先于节点出链/反链分支。
+        let selected_edges = self
+            .graph_resource
+            .read_resource(|g| g.get_selected_edges());
+        if !selected_edges.is_empty() {
+            self.show_edge_label_editor(ui, &selected_edges);
+            return;
+        }
+
         let selected = self
             .graph_resource
             .read_resource(|g| g.get_selected_nodes().first().copied());
@@ -322,6 +331,72 @@ impl CognitheonApp {
                 ui.label(RichText::new(c.as_str()).weak().small());
             }
             ui.add_space(4.0);
+        }
+    }
+
+    /// 选中边时的右侧面板分支：恰好一条边 → 标签编辑框；多条边 → 「选中 N 条边」提示。
+    ///
+    /// 编辑写回经 `self.history`：进入编辑（TextEdit 获焦）打一次预快照 `stage`，编辑期逐次
+    /// `with_resource` 写 `Edge.text`（不每键打快照），失焦时 `commit_staged_if_changed` 收口成
+    /// **一个可撤销单元**（与节点正文编辑同构，见 node.rs / state_manager.rs）。§3.3：取 `Edge`
+    /// 用 Option 容错——选区里的 `EdgeIndex` 可能已失效（被删），失效则跳过、不 panic。
+    fn show_edge_label_editor(
+        &self,
+        ui: &mut egui::Ui,
+        selected_edges: &[petgraph::graph::EdgeIndex],
+    ) {
+        if selected_edges.len() > 1 {
+            ui.label(
+                RichText::new(format!("选中 {} 条边", selected_edges.len()))
+                    .weak()
+                    .small(),
+            );
+            ui.weak("（仅选中单条边可编辑标签）");
+            return;
+        }
+
+        let edge_index = selected_edges[0];
+        // §3.3 失效容错：边可能已被删除——取不到就提示后返回，不 panic。
+        let Some(current) = self.graph_resource.read_resource(|g| {
+            g.get_edge(edge_index)
+                .map(|e| e.text.clone().unwrap_or_default())
+        }) else {
+            ui.weak("（该边已不存在）");
+            return;
+        };
+
+        ui.label(RichText::new("边标签").weak().small());
+
+        let mut buf = current;
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut buf)
+                .hint_text("边标签")
+                .desired_width(f32::INFINITY),
+        );
+
+        // 进入编辑：获焦那一帧打预快照（写闭包外单独 read 克隆 before，§3.1），把整段编辑
+        // 合并为一个撤销单元。
+        if resp.gained_focus() {
+            let before = self.graph_resource.read_resource(|g| g.clone());
+            self.history.stage(before);
+        }
+
+        // 编辑期写回：内容真的变了才写 Edge.text（空串归一为 None，与初始 None 语义一致）。
+        // 不在此处各自打快照——已由 stage/commit 合并。
+        if resp.changed() {
+            let new_text = if buf.trim().is_empty() {
+                None
+            } else {
+                Some(buf.clone())
+            };
+            self.graph_resource
+                .with_resource(|g| g.update_edge_text(edge_index, new_text));
+        }
+
+        // 退出编辑（失焦）：把暂存快照按"图数据是否真的变了"提交或丢弃，收口成一个撤销单元。
+        if resp.lost_focus() {
+            let after = self.graph_resource.read_resource(|g| g.clone());
+            self.history.commit_staged_if_changed(&after);
         }
     }
 
