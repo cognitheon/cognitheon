@@ -495,6 +495,53 @@ impl CognitheonApp {
             });
     }
 
+    /// 关键词过滤控件（顶栏）：输入框 + Dim/Hide 模式切换 + 清空按钮（大图降噪）。
+    ///
+    /// 输入关键词 → 不匹配的节点（及其相连边）淡出（Dim）或隐藏（Hide）；清空恢复全部可见。
+    /// 状态全在 egui temp data（[`crate::graph::filter`]：query / 模式），纯 UI、**不进序列化、
+    /// 不进 history、不碰 SSOT / 状态机**——可见度判定集中在 `render_graph` 入口算一次、各 widget
+    /// 反读（§3.3 / §3.5）。匹配集复用现成 `wikilink::search`（标题 + 别名 + 正文，已有测试）。
+    ///
+    /// `&self` 无关（只读写 temp data），用关联函数避免无谓借用；与命令面板 / 边类型切换并列于顶栏。
+    fn show_filter_controls(ui: &mut egui::Ui) {
+        use crate::graph::filter::{current_mode, current_query, set_mode, set_query, FilterMode};
+
+        let ctx = ui.ctx().clone();
+        ui.label("过滤");
+
+        // 输入框：改动即写回 temp data（下一帧 render_graph 入口据此重算可见集）。
+        let mut query = current_query(&ctx);
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut query)
+                .hint_text("关键词…")
+                .desired_width(140.0),
+        );
+        if resp.changed() {
+            set_query(&ctx, query.clone());
+        }
+
+        // Dim / Hide 模式切换（仿 EdgeType 的 selectable_value 风格）。
+        let mut mode = current_mode(&ctx);
+        let before = mode;
+        ComboBox::from_id_salt("filter_mode")
+            .selected_text(match mode {
+                FilterMode::Dim => "淡出",
+                FilterMode::Hide => "隐藏",
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut mode, FilterMode::Dim, "淡出 (Dim)");
+                ui.selectable_value(&mut mode, FilterMode::Hide, "隐藏 (Hide)");
+            });
+        if mode != before {
+            set_mode(&ctx, mode);
+        }
+
+        // 清空：恢复全部可见（query 置空 → render_graph 入口判定 active=false）。
+        if ui.button("✖").on_hover_text("清空过滤").clicked() {
+            set_query(&ctx, String::new());
+        }
+    }
+
     /// 命令面板（全文搜索 / 快速跳转）。
     ///
     /// 状态全部存在 egui temp data（隐式状态总线约定），不进序列化：
@@ -1462,6 +1509,11 @@ impl eframe::App for CognitheonApp {
                     self.history
                         .mutate(&self.graph_resource, |graph| graph.edge_type = edge_type);
                 }
+
+                ui.add_space(16.0);
+
+                // 关键词过滤（大图降噪）：输入框 + Dim/Hide 模式切换。纯 UI / temp data，不进 history。
+                Self::show_filter_controls(ui);
 
                 ui.add_space(16.0);
 

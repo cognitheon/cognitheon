@@ -340,6 +340,20 @@ fn escape_md_link_text(title: &str) -> String {
 
 impl Widget for NodeWidget {
     fn ui(mut self, ui: &mut egui::Ui) -> egui::Response {
+        // 关键词过滤可见度（在 render_graph 入口算好的本帧快照里反读，§3.3）。
+        // - Hidden（Hide 模式不匹配）：**不画卡片、不写 observer 几何**——直接返回一个零尺寸
+        //   不可交互的 Response。相连边由 EdgeWidget 凭"两端可见集"整条跳过，故不会去读这个
+        //   缺失的几何（从源头避开 node_rect_center 等 .unwrap() panic，§3.3）。
+        // - Dimmed（Dim 模式不匹配）：节点照常渲染、照常写几何，只把颜色 alpha 降低淡出。
+        // - Visible / 无过滤：原样渲染。
+        let visibility = crate::graph::filter::node_visibility(ui.ctx(), self.node_index);
+        if visibility == crate::graph::filter::Visibility::Hidden {
+            // 不在画布上分配任何区域、不接管交互、不发布几何。
+            let id = ui.id().with(("node_hidden", self.node_index));
+            return ui.interact(egui::Rect::NOTHING, id, egui::Sense::hover());
+        }
+        let dimmed = visibility == crate::graph::filter::Visibility::Dimmed;
+
         // 读取节点数据与状态
         let (title, body, position) = self.graph_resource.read_resource(|graph| {
             let n = graph.get_node(self.node_index).unwrap();
@@ -379,6 +393,12 @@ impl Widget for NodeWidget {
             ))
             .layout(egui::Layout::top_down(egui::Align::Min));
         let card = ui.scope_builder(builder, |ui| {
+            // Dim 模式不匹配节点：整张卡片（Frame 填充 / 描边 / 文字 / Markdown）按统一系数淡出。
+            // 用 painter 级 set_opacity 一次性覆盖该子 UI 的所有绘制，避免逐元素重算颜色、也天然
+            // 覆盖 egui_commonmark 渲染的正文（§3.5：纯渲染层、不碰几何）。
+            if dimmed {
+                ui.set_opacity(crate::colors::DIM_ALPHA_FACTOR);
+            }
             egui::Frame::default()
                 .fill(node_background(theme))
                 .stroke(Stroke::new(1.0, base_border))
@@ -416,12 +436,21 @@ impl Widget for NodeWidget {
         // 内红外金，选中语义仍占优（红更贴近卡片）。描边像素与卡片本身一致——卡片是固定像素尺寸
         // （CARD_WIDTH，刻意不随画布缩放，见上方 Frame 注释），故描边宽 / 外扩量也用固定像素、
         // 不 ×scaling（§3.2 的 ×scaling 只适用于随画布缩放的画布空间元素；此卡片不缩放）。
+        // 这两圈外侧描边画在主 painter 上（不在被 set_opacity 淡出的卡片子 UI 内），故 Dim 模式
+        // 下需各自把颜色 alpha 同步降下来（crate::colors::dim），保持整节点视觉一致地淡出。
+        let dim_if = |c: egui::Color32| {
+            if dimmed {
+                crate::colors::dim(c)
+            } else {
+                c
+            }
+        };
         if is_hit {
             let hit_rect = rect.expand(3.0);
             ui.painter().rect_stroke(
                 hit_rect,
                 9.0, // = Frame 圆角 6 + 外扩 3，保持圆角同心
-                Stroke::new(2.5, node_border_hit(theme)),
+                Stroke::new(2.5, dim_if(node_border_hit(theme))),
                 egui::StrokeKind::Outside,
             );
         }
@@ -432,7 +461,7 @@ impl Widget for NodeWidget {
             ui.painter().rect_stroke(
                 rect,
                 6.0,
-                Stroke::new(2.0, node_border_selected(theme)),
+                Stroke::new(2.0, dim_if(node_border_selected(theme))),
                 egui::StrokeKind::Outside,
             );
         }

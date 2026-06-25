@@ -1,5 +1,20 @@
 // 为亮色/暗色主题设置颜色
 
+/// 关键词过滤 Dim 模式下"淡出"图元的 alpha 缩放系数（0~1）。
+///
+/// 不匹配的节点 / 边把自身颜色的 alpha 乘以它后渲染（仍可见但明显变淡），与命中节点形成
+/// 强对比。集中为常量便于统一调参，渲染端只调 [`dim`]。
+pub const DIM_ALPHA_FACTOR: f32 = 0.18;
+
+/// 把一个颜色按 [`DIM_ALPHA_FACTOR`] 降低 alpha，用于 Dim 模式淡出不匹配的节点 / 边。
+///
+/// egui `Color32` 是**预乘 alpha**（premultiplied）：缩放 alpha 必须连同 RGB 一起按同一系数
+/// 缩放，否则颜色会失真发亮。`Color32::gamma_multiply` 正是"对预乘色整体乘一个 0~1 因子"
+/// （linofy 后逐分量相乘）的标准做法，故直接用它，避免手算预乘分量的坑。
+pub fn dim(color: egui::Color32) -> egui::Color32 {
+    color.gamma_multiply(DIM_ALPHA_FACTOR)
+}
+
 pub fn node_border(theme: egui::Theme) -> egui::Color32 {
     if theme == egui::Theme::Light {
         egui::Color32::from_rgba_premultiplied(19, 90, 155, 200)

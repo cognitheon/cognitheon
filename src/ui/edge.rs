@@ -358,6 +358,26 @@ impl EdgeWidget {
 
 impl Widget for EdgeWidget {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
+        // 关键词过滤可见度：由两端节点可见度合成（用可见集，**不依赖 observer 几何**，§3.3）。
+        // 端点经 edge_endpoints 容错读取——边已被删则 None，按"无端点"早退（与下方 unwrap 路径
+        // 一致：边存在时端点必在）。
+        use crate::graph::filter::{edge_visibility, Visibility};
+        let endpoints = self
+            .graph_resource
+            .read_resource(|graph| graph.graph.edge_endpoints(self.edge_index));
+        let edge_vis = match endpoints {
+            Some((src, dst)) => edge_visibility(ui.ctx(), src, dst),
+            None => Visibility::Visible,
+        };
+
+        // Hide 模式且任一端隐藏 → **整条边跳过**：不 update 几何（避开 node_rect_center 等对隐藏
+        // 节点缺失几何的 .unwrap()，§3.3）、不发布命中旁路（hit_test_edge 自然读不到 → 不可命中，
+        // 看不见的边也点不中）、不画线/箭头/标签。返回零尺寸不可交互 Response。
+        if edge_vis == Visibility::Hidden {
+            let id = ui.id().with(("edge_hidden", self.edge_index));
+            return ui.interact(egui::Rect::NOTHING, id, egui::Sense::hover());
+        }
+
         self.update_bezier_edge(ui);
         self.update_line_edge(ui);
         // println!("TempEdgeWidget::ui");
@@ -379,29 +399,44 @@ impl Widget for EdgeWidget {
         // move 进 widget 之前算好。
         let label_midpoint = edge_canvas_midpoint(&edge_type, &line_edge, &bezier_edge);
 
-        let response = match edge_type {
-            EdgeType::Bezier => ui.add(&mut BezierWidget::new(
-                bezier_edge,
-                self.canvas_state_resource.clone(),
-            )),
-            EdgeType::Line => ui.add(LineWidget::new(
-                line_edge,
-                self.canvas_state_resource.clone(),
-            )),
+        // Dim 模式且任一端淡出 → 边随之淡出：用 ui.scope 局部 set_opacity，统一覆盖线/箭头/
+        // 高亮/标签的全部绘制（line/bezier widget 写死 GRAY，逐元素改色侵入大；painter 级
+        // 透明度一次到位且不影响后续 widget）。§3.5：纯渲染层、不碰几何与命中。
+        let dimmed = edge_vis == Visibility::Dimmed;
+        let render = |ui: &mut egui::Ui| {
+            let response = match edge_type {
+                EdgeType::Bezier => ui.add(&mut BezierWidget::new(
+                    bezier_edge,
+                    self.canvas_state_resource.clone(),
+                )),
+                EdgeType::Line => ui.add(LineWidget::new(
+                    line_edge,
+                    self.canvas_state_resource.clone(),
+                )),
+            };
+
+            // 选中 / hover 高亮：选中优先（更醒目的红），其次 hover（浅蓝）。
+            let theme = ui.ctx().theme();
+            if self.is_selected() {
+                self.draw_highlight(ui, &canvas_samples, edge_selected(theme));
+            } else if get_hovered_edge(ui.ctx()) == Some(self.edge_index) {
+                self.draw_highlight(ui, &canvas_samples, edge_hover(theme));
+            }
+
+            // 边标签只读渲染（画在线/高亮之上）：Edge.text 非空才绘制。
+            self.draw_label(ui, label_midpoint);
+            response
         };
 
-        // 选中 / hover 高亮：选中优先（更醒目的红），其次 hover（浅蓝）。
-        let theme = ui.ctx().theme();
-        if self.is_selected() {
-            self.draw_highlight(ui, &canvas_samples, edge_selected(theme));
-        } else if get_hovered_edge(ui.ctx()) == Some(self.edge_index) {
-            self.draw_highlight(ui, &canvas_samples, edge_hover(theme));
+        if dimmed {
+            let scope = ui.scope(|ui| {
+                ui.set_opacity(crate::colors::DIM_ALPHA_FACTOR);
+                render(ui)
+            });
+            scope.inner
+        } else {
+            render(ui)
         }
-
-        // 边标签只读渲染（画在线/高亮之上）：Edge.text 非空才绘制。
-        self.draw_label(ui, label_midpoint);
-
-        response
     }
 }
 

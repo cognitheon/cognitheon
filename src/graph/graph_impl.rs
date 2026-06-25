@@ -259,6 +259,14 @@ pub fn render_graph(
     canvas_state_resource: CanvasStateResource,
     history: History,
 ) {
+    // 过滤可见度判定集中在此一处（§3.3 / §3.5）：算一张"本帧哪些节点可见"的快照写入 temp
+    // data，下面的 EdgeWidget / NodeWidget 与 hit_test 反读，避免每个 widget 各自重算 O(N)
+    // 全文搜索。可见集复用现成 wikilink::search；query 空 → 全部可见。§3.1：图只读经
+    // read_resource 闭包（作用域 = 锁作用域），闭包内不再取同一锁。
+    graph_resource.read_resource(|graph| {
+        crate::graph::filter::publish_filter_visibility(ui.ctx(), graph);
+    });
+
     let node_indices = graph_resource
         .read_resource(|graph| graph.graph.node_indices().collect::<Vec<NodeIndex>>());
 

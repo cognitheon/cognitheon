@@ -128,6 +128,15 @@ impl InputContext {
         // 使用你现有的命中测试逻辑
         self.graph_resource.read_resource(|graph| {
             graph.graph.node_indices().find(|&node_index| {
+                // Hide 模式下的隐藏节点：从源头跳过命中——隐藏节点本帧不发布几何，但 temp data 里
+                // 可能残留上一帧（隐藏前）的 NodeRenderInfo，若不排除会"点中看不见的节点"。用可见集
+                // 判定（§3.3；与边一致承认一帧延迟：hit_test 在 render_graph 前跑，读上一帧快照）。
+                if crate::graph::filter::node_visibility(ui.ctx(), node_index)
+                    == crate::graph::filter::Visibility::Hidden
+                {
+                    return false;
+                }
+
                 let node_render_info: Option<NodeRenderInfo> = ui
                     .ctx()
                     .data(|d| d.get_temp(Id::new(node_index.index().to_string())));
@@ -170,6 +179,19 @@ impl InputContext {
 
         let mut best: Option<(EdgeIndex, f32)> = None;
         for edge_index in edge_indices {
+            // Hide 模式下的隐藏边：从源头跳过命中——隐藏边本帧不发布命中旁路，但 temp data 里
+            // 可能残留上一帧（变为隐藏前）发布的 EdgeHitInfo，若不在此排除会"点中看不见的边"。
+            // 用可见集判定（不依赖几何，§3.3）：任一端隐藏即整条边不可命中。
+            let hidden = self
+                .graph_resource
+                .read_resource(|graph| graph.graph.edge_endpoints(edge_index))
+                .is_some_and(|(src, dst)| {
+                    crate::graph::filter::edge_visibility(ui.ctx(), src, dst)
+                        == crate::graph::filter::Visibility::Hidden
+                });
+            if hidden {
+                continue;
+            }
             let Some(hit_info) = get_edge_hit_info(ui.ctx(), edge_index) else {
                 continue; // 该边几何尚未发布（一帧延迟）——跳过，不 panic。
             };
