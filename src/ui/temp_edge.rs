@@ -61,7 +61,7 @@ impl<'a> Widget for TempEdgeWidget<'a> {
             .data(|d| d.get_temp(Id::new(node_id.index().to_string())))
             .unwrap();
         let screen_rect = node_render_info.screen_rect(&self.canvas_state_resource);
-        println!("screen_rect: {:?}", screen_rect);
+        log::debug!("screen_rect: {:?}", screen_rect);
         let response = ui.allocate_rect(screen_rect, Sense::click_and_drag());
 
         let edge_type = self
@@ -75,12 +75,12 @@ impl<'a> Widget for TempEdgeWidget<'a> {
                     .data(|d| d.get_temp(Id::new(node_id.index().to_string())))
                     .unwrap();
                 let node_center = node_render_info.canvas_center();
-                println!("node_center: {:?}", node_center);
+                log::debug!("node_center: {:?}", node_center);
                 // 获取起始锚点
                 let source_anchor = &self.temp_edge.bezier_edge.source_anchor;
                 // 计算差异
                 let delta = node_center - source_anchor.canvas_pos;
-                println!("delta: {:?}", delta);
+                log::debug!("delta: {:?}", delta);
                 ui.add(&mut BezierWidget::new(
                     self.temp_edge.bezier_edge.clone(),
                     self.canvas_state_resource,

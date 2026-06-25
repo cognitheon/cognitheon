@@ -159,9 +159,10 @@ impl InputStateManager {
     /// 转换到新状态
     pub fn transition_to(&mut self, new_state: InputState) {
         // 可以在这里添加状态转换的日志或验证
-        println!(
+        log::debug!(
             "Input state transition: {:?} -> {:?}",
-            self.current_state, new_state
+            self.current_state,
+            new_state
         );
         self.current_state = new_state;
     }
@@ -281,7 +282,7 @@ impl InputStateManager {
         if self.current_state.handles_mouse_motion() {
             let delta = ui.input(|i: &egui::InputState| i.pointer.delta());
             if delta != Vec2::ZERO {
-                println!("delta: {:?}", delta);
+                log::trace!("delta: {:?}", delta);
                 self.handle_mouse_motion(ui, delta, target);
             }
         }

@@ -80,7 +80,7 @@ impl CognitheonApp {
         setup_font(&cc.egui_ctx);
 
         let mut app = if let Some(storage) = cc.storage {
-            println!("load");
+            log::info!("load");
             let mut app: CognitheonApp =
                 eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
             app.canvas_widget =
@@ -507,7 +507,7 @@ impl eframe::App for CognitheonApp {
                 {
                     ui.menu_button("File", |ui| {
                         if ui.button("New").clicked() {
-                            println!("new");
+                            log::info!("new");
                             self.graph_resource.with_resource(|graph| graph.reset());
                         }
 
@@ -583,7 +583,7 @@ impl eframe::App for CognitheonApp {
                 // println!("theme: {:?}", theme);
 
                 if ui.button("test").clicked() {
-                    println!("test");
+                    log::debug!("test");
                     // egui::Window::new("test").show(ctx, |ui| {
                     //     ui.label("test");
                     // });
@@ -758,7 +758,7 @@ fn setup_font(ctx: &egui::Context) {
         .insert(0, "source_hans_sans".to_owned());
 
     // 在插入字体后添加调试输出
-    println!(
+    log::debug!(
         "Font data size: {:?} bytes",
         fonts.font_data["source_hans_sans"].font.len()
     );
