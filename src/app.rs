@@ -267,12 +267,16 @@ impl CognitheonApp {
             return;
         };
 
-        let (title, outlinks) = self
-            .graph_resource
-            .read_resource(|g| match g.get_node(idx) {
-                Some(n) => (n.text.clone(), wikilink::parse_links(&n.note)),
-                None => (String::new(), Vec::new()),
-            });
+        let (title, outlinks, tags) =
+            self.graph_resource
+                .read_resource(|g| match g.get_node(idx) {
+                    Some(n) => (
+                        n.text.clone(),
+                        wikilink::parse_links(&n.note),
+                        wikilink::parse_tags(&n.note),
+                    ),
+                    None => (String::new(), Vec::new(), Vec::new()),
+                });
         let title_disp = if title.is_empty() {
             "（无标题）"
         } else {
@@ -315,6 +319,16 @@ impl CognitheonApp {
             }
         }
 
+        // 标签（正文 #tag 派生的横切分类，v1 不进图、纯检索维度）
+        if !tags.is_empty() {
+            ui.add_space(8.0);
+            ui.separator();
+            ui.label(RichText::new("标签").weak().small());
+            for tag in &tags {
+                self.show_tag_entry(ui, idx, tag);
+            }
+        }
+
         // 反向链接 + 上下文原话
         ui.add_space(8.0);
         ui.separator();
@@ -340,6 +354,58 @@ impl CognitheonApp {
             }
             ui.add_space(4.0);
         }
+    }
+
+    /// 单个标签条目（链接面板「标签」区）：`#tag` 可展开，列出图中所有正文含该标签的节点，点击跳转。
+    ///
+    /// **v1 设计约束（标签不进图、纯检索维度）**：只读 graph（§3.1 `read_resource`，经
+    /// [`crate::wikilink::nodes_with_tag`] 实时 parse 正文，不建节点/边、不动 SSOT/序列化），跳转复用
+    /// [`Self::focus_node`]（§3.3 `NodeIndex` 句柄、选中 + 居中）。标签着标签色（与编辑态高亮同色系，
+    /// 经 [`crate::colors::tag`]），与双链 / 反链区视觉区分。`current` 是当前选中节点，列表里标注它自身。
+    fn show_tag_entry(&self, ui: &mut egui::Ui, current: petgraph::graph::NodeIndex, tag: &str) {
+        let theme = if ui.visuals().dark_mode {
+            egui::Theme::Dark
+        } else {
+            egui::Theme::Light
+        };
+        let tag_col = crate::colors::tag(theme);
+        // 含该标签的全部节点（含 current 自身），实时 parse、只读图。
+        let tagged = self
+            .graph_resource
+            .read_resource(|g| wikilink::nodes_with_tag(g, tag));
+        let header = RichText::new(format!("#{tag}（{}）", tagged.len())).color(tag_col);
+        egui::CollapsingHeader::new(header)
+            .id_salt(Id::new(("tag_entry", current.index(), tag)))
+            .default_open(false)
+            .show(ui, |ui| {
+                for &node in &tagged {
+                    // §3.3 失效容错：parse 后节点理论上可能被删——取不到就跳过、不 panic。
+                    let label = self.graph_resource.read_resource(|g| {
+                        g.get_node(node).map(|n| {
+                            if n.text.is_empty() {
+                                "（无标题）".to_owned()
+                            } else {
+                                n.text.clone()
+                            }
+                        })
+                    });
+                    let Some(label) = label else { continue };
+                    let marker = if node == current {
+                        "（本节点）"
+                    } else {
+                        ""
+                    };
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new(format!("• {label}{marker}")))
+                                .frame(false),
+                        )
+                        .clicked()
+                    {
+                        self.focus_node(ui.ctx(), node);
+                    }
+                }
+            });
     }
 
     /// 同名标题歧义提示 + 候选预览（出链区子项）：某 `[[标题]]` 在图中匹配到多个同名节点

@@ -38,6 +38,84 @@ pub fn parse_links(text: &str) -> Vec<String> {
     out
 }
 
+/// 判定字符是否能构成标签（`#tag`）正文：字母 / 数字 / CJK / `_` / `-` / `/`（层级分隔）。
+///
+/// 与 markdown 标题 `# ` 的判据**天然互斥**：标题要求 `#` 后紧跟空格（见 `md_highlight::heading_level`），
+/// 而本谓词对空白返回 `false`，故 `# 标题` 不会被当成标签、`#tag` 才是标签。
+/// `/` 入集是为了 `#a/b` 这类层级标签（同 Obsidian/Logseq）；中文等非 ASCII 字母靠 `is_alphabetic` 纳入。
+fn is_tag_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_' || ch == '-' || ch == '/'
+}
+
+/// 从文本中按出现顺序提取所有 `#标签` 引用（去重、保留出现顺序）。
+///
+/// **v1：标签不进图**——仅作正文派生的检索维度（搜索 / 面板 / 编辑态高亮实时 parse），不建节点/边、
+/// 不改 `Node`/`Edge`/序列化。
+///
+/// 识别规则（与 markdown 标题消歧、对中文安全）：
+/// - `#` **紧跟标签字符**（[`is_tag_char`]：字母 / 数字 / CJK / `_` / `-` / `/`）= 标签起点；
+///   `#` 后是**空白**则是 markdown 标题（`# 标题`），**不**当标签——与 `md_highlight::heading_level`
+///   的「`#` 后跟空格」判据互斥、保持一致。
+/// - 标签正文一直吃到**首个非标签字符**（空白或标点）为止；故 `#知识图谱，` 提取出 `知识图谱`
+///   （中文逗号是终止边界）、`#rust.` 提取出 `rust`。
+/// - 连续多个 `#`（如 `##`、`###`）：`#` 不是标签字符，故 `##tag` 的首个 `#` 后紧跟 `#`（非标签字符），
+///   不构成标签；`# ` / `## ` 是标题，也不构成。`#` 单独出现（后接空白/EOF/标点）不构成标签。
+/// - 去重并保留首次出现顺序（同 [`parse_links`]）。
+///
+/// 经 `char_indices` 在 UTF-8 上扫描（`#` 是 ASCII、不会切进多字节中段），对中文标签安全。
+pub fn parse_tags(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let bytes = text.as_bytes();
+    let mut iter = text.char_indices().peekable();
+    while let Some((i, ch)) = iter.next() {
+        if ch != '#' {
+            continue;
+        }
+        // `#` 后必须紧跟标签字符才算标签起点（否则是标题 `# `、连续 `##`、或孤立 `#`）。
+        let tag_start = i + 1; // `#` 是 ASCII，占 1 字节
+        match iter.peek() {
+            Some(&(_, next)) if is_tag_char(next) => {}
+            _ => continue,
+        }
+        // 从 tag_start 吃到首个非标签字符为止。逐字符推进 iter，使外层循环从标签末尾继续，
+        // 避免把标签正文里的字符（如 `a/b` 的 `/`）误当新一轮扫描起点。
+        let mut tag_end = tag_start;
+        while let Some(&(j, c)) = iter.peek() {
+            if is_tag_char(c) {
+                tag_end = j + c.len_utf8();
+                iter.next();
+            } else {
+                break;
+            }
+        }
+        // tag_start / tag_end 均来自 char 边界（`#` 后一字节 + char_indices 偏移），切片安全。
+        let tag = std::str::from_utf8(&bytes[tag_start..tag_end])
+            .expect("tag 切片落在 char 边界")
+            .to_owned();
+        if !out.iter().any(|t| t == &tag) {
+            out.push(tag);
+        }
+    }
+    out
+}
+
+/// 列出正文里含 `#tag` 标签的所有节点（标签精确相等，**大小写敏感**，按节点索引顺序）。
+///
+/// **v1 标签检索维度**（标签不进图）：遍历节点、对其 `note` 实时 [`parse_tags`]，含 `tag` 即命中。
+/// `tag` 传入时去掉前导 `#`（调用方若带 `#` 需自行 `trim_start_matches('#')`）。纯函数、可无头单测。
+/// 大小写敏感（同 Obsidian 标签默认；标题/正文的子串搜索 [`search`] 才大小写不敏感）。
+pub fn nodes_with_tag(graph: &Graph, tag: &str) -> Vec<NodeIndex> {
+    let tag = tag.trim_start_matches('#');
+    if tag.is_empty() {
+        return Vec::new();
+    }
+    graph
+        .graph
+        .node_indices()
+        .filter(|&i| parse_tags(&graph.graph[i].note).iter().any(|t| t == tag))
+        .collect()
+}
+
 /// 节点是否以 `title` 命名：标题精确相等，**或**别名集里有精确相等项。
 ///
 /// 别名（`Node.aliases`）与 `text` 一视同仁地参与寻址（PKM aliases，同 Obsidian）。
@@ -380,10 +458,22 @@ pub fn neighborhood(graph: &Graph, center: NodeIndex, hops: usize) -> HashSet<No
 /// 全文搜索：标题、**别名**或正文包含 `query`（**大小写不敏感**的子串匹配）的节点，
 /// 按节点索引顺序返回。
 ///
+/// **标签检索分支**：`query` 以 `#` 开头且其后是合法标签名（如 `#rust`）时，转为**标签精确匹配**
+/// ——经 [`nodes_with_tag`] 列出正文含该 `#tag` 的节点（大小写敏感、精确相等，而非子串）。这让命令面板
+/// 输 `#rust` 直接命中带该标签的笔记，是标签作为「横切分类」检索维度的入口（标签不进图，实时 parse）。
+/// 退化：仅一个 `#`（后无合法标签名）落回普通子串搜索（按 `#` 子串匹配，行为同旧版）。
+///
 /// 纳入别名：`[[别名]]`（或别名本身的关键词）在命令面板能搜到对应节点——与别名寻址语义一致。
 pub fn search(graph: &Graph, query: &str) -> Vec<NodeIndex> {
     if query.is_empty() {
         return Vec::new();
+    }
+    // 标签分支：`#tag`（紧跟合法标签名）→ 标签精确匹配（大小写敏感）。
+    if let Some(rest) = query.strip_prefix('#') {
+        let tag: String = rest.chars().take_while(|&c| is_tag_char(c)).collect();
+        if !tag.is_empty() {
+            return nodes_with_tag(graph, &tag);
+        }
     }
     let q = query.to_lowercase();
     graph
@@ -452,6 +542,133 @@ mod tests {
         assert_eq!(parse_links("[[]] [[unclosed"), Vec::<String>::new());
         assert_eq!(parse_links("[[a[[b]]]]"), Vec::<String>::new());
         assert!(parse_links("no links here").is_empty());
+    }
+
+    // ===== 标签 #tag 解析（parse_tags）—— 与 markdown 标题消歧、中文终止边界 =====
+
+    #[test]
+    fn parse_tags_english_and_chinese() {
+        // 句中标签、英文、中文。
+        assert_eq!(parse_tags("见 #rust 这里"), vec!["rust"]);
+        assert_eq!(parse_tags("关于 #知识图谱 的笔记"), vec!["知识图谱"]);
+        // 多个标签，保留出现顺序。
+        assert_eq!(
+            parse_tags("#rust 与 #wasm 和 #egui"),
+            vec!["rust", "wasm", "egui"]
+        );
+        // 数字 / 下划线 / 连字符。
+        assert_eq!(
+            parse_tags("#v2 #foo_bar #foo-bar"),
+            vec!["v2", "foo_bar", "foo-bar"]
+        );
+    }
+
+    #[test]
+    fn parse_tags_line_start_tag_vs_heading() {
+        // 行首 `#tag`（无空格）= 标签。
+        assert_eq!(parse_tags("#rust 行首标签"), vec!["rust"]);
+        // `# 标题`（`#` 后空格）= markdown 标题，不是标签。
+        assert!(parse_tags("# 标题").is_empty());
+        assert!(parse_tags("# 这是中文标题").is_empty());
+        // `## 二级标题` / `### 三级` 同理（`#` 后紧跟 `#` 非标签字符 → 不构成标签；后续是空格→标题）。
+        assert!(parse_tags("## 二级标题").is_empty());
+        assert!(parse_tags("### 三级标题").is_empty());
+    }
+
+    #[test]
+    fn parse_tags_punctuation_terminates() {
+        // 中文标点终止：`#知识图谱，` 的标签是 `知识图谱`（逗号不入标签）。
+        assert_eq!(parse_tags("#知识图谱，很重要"), vec!["知识图谱"]);
+        // 英文标点 / 括号 / 句号终止。
+        assert_eq!(parse_tags("用 #rust. 写"), vec!["rust"]);
+        assert_eq!(parse_tags("(#tag)"), vec!["tag"]);
+        assert_eq!(parse_tags("#tag, #other"), vec!["tag", "other"]);
+    }
+
+    #[test]
+    fn parse_tags_hierarchy_slash() {
+        // 层级标签 `#a/b`：`/` 入标签字符集。
+        assert_eq!(
+            parse_tags("#projects/cognitheon"),
+            vec!["projects/cognitheon"]
+        );
+        assert_eq!(parse_tags("#a/b/c 末尾"), vec!["a/b/c"]);
+    }
+
+    #[test]
+    fn parse_tags_dedup_and_lone_hash() {
+        // 去重、保留首次顺序。
+        assert_eq!(parse_tags("#rust #rust #wasm #rust"), vec!["rust", "wasm"]);
+        // 孤立 `#`（后接空白 / EOF / 标点）不构成标签。
+        assert!(parse_tags("单独 # 号").is_empty());
+        assert!(parse_tags("行尾 #").is_empty());
+        assert!(parse_tags("#! 非标签").is_empty());
+        assert!(parse_tags("没有标签的文本").is_empty());
+    }
+
+    #[test]
+    fn parse_tags_chinese_terminates_at_space_and_eof() {
+        // 中文标签在空白终止；行尾标签吃到 EOF。
+        assert_eq!(parse_tags("#第二大脑 是核心"), vec!["第二大脑"]);
+        assert_eq!(parse_tags("末尾 #机器学习"), vec!["机器学习"]);
+    }
+
+    // ===== 标签检索 nodes_with_tag / search(#tag) =====
+
+    #[test]
+    fn nodes_with_tag_matches_body_tags() {
+        let (mut g, _c) = graph_with(&["A", "B", "C"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        let c = find_by_title(&g, "C").unwrap();
+        g.get_node_mut(a).unwrap().note = "学习 #rust 与 #wasm".to_owned();
+        g.get_node_mut(b).unwrap().note = "只有 #rust".to_owned();
+        g.get_node_mut(c).unwrap().note = "无标签".to_owned();
+
+        assert_eq!(nodes_with_tag(&g, "rust"), vec![a, b], "rust 命中 A、B");
+        assert_eq!(nodes_with_tag(&g, "wasm"), vec![a], "wasm 仅命中 A");
+        // 带前导 `#` 也应被剥离后精确匹配。
+        assert_eq!(nodes_with_tag(&g, "#rust"), vec![a, b]);
+        // 不存在 / 空标签。
+        assert!(nodes_with_tag(&g, "python").is_empty());
+        assert!(nodes_with_tag(&g, "").is_empty());
+        assert!(nodes_with_tag(&g, "#").is_empty());
+    }
+
+    #[test]
+    fn nodes_with_tag_chinese_and_case_sensitive() {
+        let (mut g, _c) = graph_with(&["A", "B"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        g.get_node_mut(a).unwrap().note = "#知识图谱 的笔记".to_owned();
+        g.get_node_mut(b).unwrap().note = "#Rust 大写".to_owned();
+        assert_eq!(nodes_with_tag(&g, "知识图谱"), vec![a]);
+        // 大小写敏感：`rust` 不命中 `#Rust`。
+        assert!(nodes_with_tag(&g, "rust").is_empty());
+        assert_eq!(nodes_with_tag(&g, "Rust"), vec![b]);
+    }
+
+    #[test]
+    fn search_tag_branch_exact_match() {
+        let (mut g, _c) = graph_with(&["有标签", "无标签", "标题含rust"]);
+        let tagged = find_by_title(&g, "有标签").unwrap();
+        g.get_node_mut(tagged).unwrap().note = "见 #rust 这里".to_owned();
+        // `#rust` 走标签分支：只命中正文含 #rust 的节点（不因标题含 "rust" 字样命中）。
+        assert_eq!(
+            search(&g, "#rust"),
+            vec![tagged],
+            "标签搜索精确命中带标签节点"
+        );
+        // 普通子串搜索 "rust"：标题含 rust 的节点也命中（验证两条分支区别）。
+        let by_title = find_by_title(&g, "标题含rust").unwrap();
+        let hits = search(&g, "rust");
+        assert!(hits.contains(&tagged) && hits.contains(&by_title));
+        // 仅 `#`（无合法标签名）落回普通子串搜索：正文含 `#` 字面量的节点命中（不走标签分支、不 panic）。
+        assert_eq!(
+            search(&g, "#"),
+            vec![tagged],
+            "孤立 # 落回子串搜索，命中正文含 # 的节点"
+        );
     }
 
     #[test]

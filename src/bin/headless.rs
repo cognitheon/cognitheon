@@ -21,7 +21,9 @@
 //!   parse <i>                   解析节点 i 正文里的 [[标题]]，自动建/连节点（双链）
 //!   backlinks <i>               列出指向节点 i 的反向链接（基于边）
 //!   refs <i>                    反向引用 + 上下文原话（基于正文 [[标题]] 文本）
-//!   search <query>              全文搜索（标题/正文）
+//!   search <query>              全文搜索（标题/正文；`#tag` 走标签精确匹配）
+//!   tags <i>                    打印节点 i 正文里的 #tag 标签
+//!   tagged <name>               列出正文含 #name 标签的节点（name 不带 #）
 //!   find <title>                按精确标题找节点，返回 `node <index>`
 //!   find-all <title>            列出所有同名节点（text∪alias，text 优先），`cand <i> <t>` + `ok count <n>`
 //!   orphans                     列出孤立节点（无任何边连接），返回 `orphan <index> <title>` + `ok count <n>`
@@ -92,7 +94,7 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
             [
                 "commands: new <x> <y> [title] | title <i> <t> | body <i> <b> | alias <i> <names> | get <i>",
                 "          rm <i> | count | dump | save <path> | load <path> | reset | quit",
-                "          link <i> <j> | parse <i> | backlinks <i> | search <q> | find <title> | find-all <title> | orphans",
+                "          link <i> <j> | parse <i> | backlinks <i> | search <q> | tags <i> | tagged <name> | find <title> | find-all <title> | orphans",
                 "          export-md [<i>] | import-md-add <name> <body> | import-md-run",
             ]
             .iter()
@@ -315,6 +317,30 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
             let mut lines: Vec<String> = hits
                 .iter()
                 .map(|h| format!("hit {} {}", h.index(), escape(&s.graph.graph[*h].text)))
+                .collect();
+            lines.push(format!("ok count {}", hits.len()));
+            Ok(Some(lines))
+        }
+
+        "tags" => {
+            let idx = parse_index(rest)?;
+            let node = s.graph.get_node(idx).ok_or("no such node")?;
+            let tags = wikilink::parse_tags(&node.note);
+            let mut lines: Vec<String> =
+                tags.iter().map(|t| format!("tag {}", escape(t))).collect();
+            lines.push(format!("ok count {}", tags.len()));
+            Ok(Some(lines))
+        }
+
+        "tagged" => {
+            if rest.is_empty() {
+                return Err("usage: tagged <name>".into());
+            }
+            // name 不带 #（nodes_with_tag 会自行剥前导 #，带不带都可）。
+            let hits = wikilink::nodes_with_tag(&s.graph, rest);
+            let mut lines: Vec<String> = hits
+                .iter()
+                .map(|h| format!("tagged {} {}", h.index(), escape(&s.graph.graph[*h].text)))
                 .collect();
             lines.push(format!("ok count {}", hits.len()));
             Ok(Some(lines))

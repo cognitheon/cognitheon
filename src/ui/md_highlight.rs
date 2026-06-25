@@ -17,6 +17,8 @@ pub struct MdColors {
     pub link: Color32,
     /// 悬空双链色：`[[X]]` 中 X 当前在图里无对应标题节点时用此色（区别于 `link`）。
     pub dangling: Color32,
+    /// 标签 `#tag` 高亮色（仿 `[[双链]]` 醒目样式，区别于 link 蓝 / dangling 红 / code 橙）。
+    pub tag: Color32,
     pub code: Color32,
     pub emph: Color32,
     pub marker: Color32,
@@ -35,6 +37,7 @@ impl MdColors {
             heading: strong,
             link: Color32::from_rgb(0x4f, 0xa3, 0xff),
             dangling: crate::colors::wikilink_dangling(theme),
+            tag: crate::colors::tag(theme),
             code: if v.dark_mode {
                 Color32::from_rgb(0xe0, 0xa0, 0x70)
             } else {
@@ -67,6 +70,36 @@ fn heading_level(s: &str) -> Option<usize> {
         Some(hashes)
     } else {
         None
+    }
+}
+
+/// 字符是否能构成标签 `#tag` 正文（与 `wikilink::is_tag_char` 同口径：字母 / 数字 / CJK / `_` / `-` / `/`）。
+///
+/// 高亮端必须与 `wikilink::parse_tags` 的解析判据一致，否则会出现「高亮了但搜不到」或反之的错位。
+fn is_tag_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_' || ch == '-' || ch == '/'
+}
+
+/// 若 `rem` 以 `#标签` 开头（`#` 紧跟标签字符），返回标签**整体**（含前导 `#`）的字节长度；否则 None。
+///
+/// 与 `wikilink::parse_tags` 判据一致：`#` 后须紧跟 [`is_tag_char`]（空白 → markdown 标题，不匹配），
+/// 标签吃到首个非标签字符为止。返回长度仅依赖 char 边界（`#` 1 字节 + 各标签 char 的 `len_utf8`），
+/// 故切片落点恒在 char 边界，逐字节覆盖不变量安全。
+fn tag_token_len(rem: &str) -> Option<usize> {
+    let after_hash = rem.strip_prefix('#')?;
+    let mut len = 0usize; // 标签正文（不含 `#`）的字节长度
+    for ch in after_hash.chars() {
+        if is_tag_char(ch) {
+            len += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    // `#` 后无标签字符（标题 `# ` / 孤立 `#` / `#标点`）→ 不是标签。
+    if len == 0 {
+        None
+    } else {
+        Some(1 + len) // 1 = `#`
     }
 }
 
@@ -111,6 +144,11 @@ fn append_inline(
                 let title = rem[2..2 + rel].trim();
                 let color = if is_known(title) { c.link } else { c.dangling };
                 Some((i + 2 + rel + 2, prop, color, false, true))
+            } else if let Some(tlen) = tag_token_len(rem) {
+                // 标签 `#tag`：整体（含 `#`）着 tag 色、加下划线（仿 [[双链]] 醒目样式）。
+                // tag_token_len 的端点恒在 char 边界（见其文档），逐字节覆盖不变量不受影响；
+                // 与标题 `# ` 互斥（heading 行不进 append_inline，且 `# ` 这里也因后跟空白返回 None）。
+                Some((i + tlen, prop, c.tag, false, true))
             } else if let Some(r) = rem.strip_prefix('`') {
                 r.find('`')
                     .map(|rel| (i + 1 + rel + 1, mono, c.code, false, false))
@@ -194,6 +232,7 @@ mod tests {
     use super::*;
 
     const DANGLING: Color32 = Color32::from_rgb(0xff, 0x00, 0xff); // 测试用悬空色（区别于 link 蓝）
+    const TAG: Color32 = Color32::from_rgb(0x00, 0xff, 0xff); // 测试用标签色（区别于其它）
 
     fn test_colors() -> MdColors {
         MdColors {
@@ -201,6 +240,7 @@ mod tests {
             heading: Color32::RED,
             link: Color32::BLUE,
             dangling: DANGLING,
+            tag: TAG,
             code: Color32::GREEN,
             emph: Color32::YELLOW,
             marker: Color32::GRAY,
@@ -228,6 +268,13 @@ mod tests {
         assert_covers("嵌套 **粗 *斜* 体** 与 `代码 [[非链接]]`");
         // 悬空 / 存在混合、中文标题：两种谓词下都逐字节覆盖
         assert_covers("混合 [[已存在]] 与 [[缺失]] 收尾");
+        // 标签 #tag：英文 / 中文 / 层级 / 标点终止 / 孤立 # / 与标题互斥，均须逐字节覆盖
+        assert_covers("见 #rust 这里");
+        assert_covers("#知识图谱，很重要");
+        assert_covers("层级 #a/b/c 与 #foo_bar-baz");
+        assert_covers("混合 #tag 和 [[双链]] 与 `代码` 收尾");
+        assert_covers("孤立 # 号 与 #! 非标签 与行尾 #");
+        assert_covers("- 列表里的 #tag 标签项\n> 引用里 #quote 标签");
     }
 
     /// 找到 `job` 中正好覆盖子串 `needle` 的那一段的颜色（按字节区间命中）。
@@ -260,6 +307,42 @@ mod tests {
             DANGLING,
             "缺失中文标题 → 悬空色"
         );
+    }
+
+    #[test]
+    fn tag_highlight_color_and_boundaries() {
+        let c = test_colors();
+        let known = |_: &str| true;
+        // 英文标签整体（含 `#`）着 tag 色。
+        let job = layout("见 #rust 这里", 14.0, 200.0, &c, &known);
+        assert_eq!(color_of_substr(&job, "#rust"), TAG, "#rust → 标签色");
+        // 中文标签，标点终止：`#知识图谱` 着色、其后逗号不在标签内。
+        let job2 = layout("#知识图谱，很重要", 14.0, 200.0, &c, &known);
+        assert_eq!(
+            color_of_substr(&job2, "#知识图谱"),
+            TAG,
+            "中文标签 → 标签色"
+        );
+        // 层级标签。
+        let job3 = layout("项目 #a/b/c 末尾", 14.0, 200.0, &c, &known);
+        assert_eq!(color_of_substr(&job3, "#a/b/c"), TAG, "层级标签 → 标签色");
+    }
+
+    #[test]
+    fn heading_not_treated_as_tag() {
+        let c = test_colors();
+        let known = |_: &str| true;
+        // `# 标题`（`#` 后空格）走 heading 分支着 heading 色，不是标签色。
+        let job = layout("# 标题", 14.0, 200.0, &c, &known);
+        assert_eq!(
+            color_of_substr(&job, "# 标题"),
+            c.heading,
+            "# 标题 → heading 色，非标签"
+        );
+        // 行内孤立 `#`（后接空白）不着标签色——整行无标签段，按 base 覆盖。
+        let job2 = layout("单独 # 号", 14.0, 200.0, &c, &known);
+        assert_eq!(job2.text, "单独 # 号", "逐字节覆盖");
+        assert_eq!(color_of_substr(&job2, "#"), c.base, "孤立 # → base，非标签");
     }
 
     #[test]

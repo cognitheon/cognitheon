@@ -90,6 +90,21 @@ pub fn wikilink_dangling(theme: egui::Theme) -> egui::Color32 {
     }
 }
 
+/// 标签 `#tag` 高亮色：编辑态正文里的 `#标签` 用此色渲染（仿 `[[双链]]` 醒目样式），
+/// 提示「这是一个横切分类标签」。
+///
+/// 刻意区别于双链高亮蓝（[`crate::ui::md_highlight::MdColors::link`]）、悬空红
+/// （[`wikilink_dangling`]）与行内代码橙（`MdColors::code`）——取**绿松石 / 青绿**色相：
+/// 暗色主题用偏亮的青绿、亮色主题用更深的孔雀绿以保证在浅底上的对比度。
+/// **v1 标签不进图**，此高亮纯为编辑态视觉提示（标签的检索由面板 + 搜索 + 本高亮覆盖）。
+pub fn tag(theme: egui::Theme) -> egui::Color32 {
+    if theme == egui::Theme::Light {
+        egui::Color32::from_rgb(0x0f, 0x82, 0x6e)
+    } else {
+        egui::Color32::from_rgb(0x3a, 0xd6, 0xb4)
+    }
+}
+
 /// 边的默认描线颜色（未 hover / 未选中）。当前边渲染写死 `Color32::GRAY`，集中到此以便统一。
 pub fn edge_default(_theme: egui::Theme) -> egui::Color32 {
     egui::Color32::GRAY
