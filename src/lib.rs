@@ -1,5 +1,6 @@
 pub mod app;
 pub mod canvas;
+pub mod clipboard;
 pub mod colors;
 pub mod geometry;
 pub mod gpu_render;

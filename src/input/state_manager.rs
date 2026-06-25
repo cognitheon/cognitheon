@@ -405,6 +405,103 @@ impl InputStateManager {
         {
             self.handle_double_click(ui, target);
         }
+
+        // 子图复制 / 粘贴（Ctrl+C / Ctrl+V）。一次性事件、与上面的键盘事件并列处理（§3.4）。
+        self.handle_clipboard_events(ui);
+    }
+
+    /// 处理子图复制 / 粘贴（Ctrl+C / Ctrl+V）的一次性事件。
+    ///
+    /// **不用 `consume_key`**：egui 0.34 的集成层（native = egui-winit、wasm = eframe web）在检测到
+    /// Ctrl/Cmd+C / Ctrl/Cmd+V 时**不发 `Key::C`/`Key::V` 按键事件**，而是发**专用语义事件**
+    /// [`egui::Event::Copy`] / [`egui::Event::Paste(String)`]（粘贴文本已由集成层从系统剪贴板预读、
+    /// 随事件载入）。故这里扫 `i.events` 找这两个事件，而不是判按键——这也使其与 `app.rs` 顶部用
+    /// `consume_key` 截获的 Ctrl+P / Ctrl+Z 天然不冲突（那些消费的是 `Key` 事件，与 Copy/Paste 事件
+    /// 是两套）。（依据：egui-winit `is_copy_command`/`is_paste_command` 命中后 push `Event::Copy`/
+    /// `Event::Paste` 并 `return`，不再 push `Key`；eframe web `install_copy_cut_paste` 监听浏览器
+    /// 原生 `copy`/`paste` 事件同样 push 这两个语义事件。`ctx.copy_text` 经 `OutputCommand::CopyText`
+    /// 写系统剪贴板，两端统一。）
+    ///
+    /// **任意 TextEdit 持焦时放行给该 TextEdit**：编辑态节点的 multiline `TextEdit`、命令面板搜索框、
+    /// 右侧面板的边标签编辑框等任一文本框聚焦时，egui 的 `TextEdit` 会在它自己的 `ui()` 里用
+    /// `filtered_events`（仅聚焦 widget 的事件）消费 `Event::Copy`/`Event::Paste` 做**文本**复制/粘贴。
+    /// 状态机此时**不**处理这两个事件，让复制粘贴归该 TextEdit（复制选中文本 / 在光标处插入），不抢成
+    /// 子图复制粘贴。`state_manager.update` 在 `render_graph`（含编辑 TextEdit）之前跑，故必须靠这个
+    /// 焦点门控避免抢事件。门控用 `ctx.egui_wants_keyboard_input()`（= `memory.focused().is_some()`，
+    /// 覆盖「任意 TextEdit 持焦」），与 `app.rs` 顶部 `?`/F3 等文本键门控同款（`text_focus`）。
+    ///
+    /// **wasm 剪贴板限制**：浏览器剪贴板只在安全上下文（HTTPS / localhost）可用，且写剪贴板是异步的。
+    /// 复制经 `ctx.copy_text` → eframe 调 `navigator.clipboard.write_text`（安全上下文外会记 error 并
+    /// 静默不写，由 eframe 兜底，非本层职责）；粘贴依赖浏览器原生 `paste` 事件把文本随 `Event::Paste`
+    /// 送进来（用户须真正按 Ctrl+V 触发浏览器粘贴、且页面聚焦），本层只消费事件、不直接碰异步剪贴板
+    /// API，故无 wasm 异步坑。这是跨 native/wasm 用 egui 统一事件而非直接调系统剪贴板的合理兜底。
+    fn handle_clipboard_events(&mut self, ui: &mut egui::Ui) {
+        // 任意文本框（编辑态节点 / 命令面板 / 边标签编辑框等）持焦时：把 Copy/Paste 完全放行给
+        // 聚焦的 TextEdit，状态机不介入（§3.4）。egui_wants_keyboard_input = memory.focused().is_some()。
+        if ui.ctx().egui_wants_keyboard_input() {
+            return;
+        }
+
+        // 扫描本帧事件：复制只需知道「发生了 Copy」，粘贴需要取出 Paste 携带的文本。
+        // 一帧内若同时有多个 Paste（极少见），取第一个即可。
+        let mut copy_requested = false;
+        let mut paste_payload: Option<String> = None;
+        ui.input(|i| {
+            for event in &i.events {
+                match event {
+                    egui::Event::Copy => copy_requested = true,
+                    egui::Event::Paste(text) if paste_payload.is_none() => {
+                        paste_payload = Some(text.clone());
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        // 复制：读当前选中节点 → 导出子图片段 → 写系统剪贴板（§3.1 读锁闭包作用域 = 锁作用域）。
+        if copy_requested {
+            let json = self.context.graph_resource.read_resource(|graph| {
+                let sel = graph.get_selected_nodes();
+                crate::clipboard::copy_subgraph(graph, &sel)
+            });
+            ui.ctx().copy_text(json);
+            log::debug!("clipboard: copied subgraph to system clipboard");
+        }
+
+        // 粘贴：在当前鼠标画布坐标处粘贴副本，整组作为一个可撤销单元（§3.3）。
+        if let Some(json) = paste_payload {
+            let paste_at = self
+                .context
+                .screen_to_canvas(self.context.current_mouse_pos);
+            let canvas = self.context.canvas_state_resource.clone();
+
+            // 用 stage + commit_staged_if_changed 而非 mutate：坏 JSON / 空片段的粘贴是无操作，
+            // 不应产生空撤销项（与 handle_delete_key 对空选区不打快照同理）。stage 在写闭包外先
+            // 克隆 before（§3.1）；paste 真改了图才 commit，没改则丢弃。
+            self.stage_edit_snapshot();
+            let new_indices = self.context.graph_resource.with_resource(|graph| {
+                // paste_subgraph 内取的是 CanvasState 锁（new_node_id / new_edge_id），与此处持有的
+                // Graph 写锁是不同资源，不构成同资源重入（§3.1）。
+                crate::clipboard::paste_subgraph(graph, &canvas, &json, paste_at)
+            });
+            // 提交/丢弃在写闭包外单独 read 克隆 after（§3.1）。空粘贴 → 图未变 → 丢弃暂存快照。
+            let after = self.context.graph_resource.read_resource(|g| g.clone());
+            self.context.history.commit_staged_if_changed(&after);
+
+            // 粘贴后：真正粘出了节点时才改选区（清旧选区 + 选新节点），便于继续整体拖动。
+            // 空粘贴（坏 JSON / 空片段）→ new_indices 为空，保留既有选区，不打扰用户。
+            if !new_indices.is_empty() {
+                self.context.graph_resource.with_resource(|graph| {
+                    graph.selected.clear();
+                    graph.select_nodes(new_indices.clone());
+                });
+            }
+            log::debug!(
+                "clipboard: pasted {} node(s) at canvas {:?}",
+                new_indices.len(),
+                paste_at
+            );
+        }
     }
 
     /// 消费右键菜单写入的「进入编辑 / 新建并编辑」请求（temp-data 反向总线，§3.4 输入唯一驱动）。
