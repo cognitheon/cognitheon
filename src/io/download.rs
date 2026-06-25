@@ -95,3 +95,87 @@ pub fn trigger_download(filename: &str, bytes: &[u8], mime: &str) {
         wasm_bindgen::JsValue::from_str(msg)
     }
 }
+
+// ============================ Markdown / vault 导出 ============================
+
+/// 触发一次**单文件**导出（Markdown 单节点导出 / wasm vault zip 复用此入口）。与 [`trigger_download`]
+/// 同范式但**保留完整文件名**（含 `.md` / `.zip` 扩展，不像 `.cnt` 那样靠 rfd add_filter 钉死扩展）。
+///
+/// - **native**：弹保存对话框，默认文件名 = 传入的 `filename`，不加扩展名过滤器（任意扩展自由落盘）。
+/// - **wasm**：复用 [`trigger_download`] 的 Blob 下载流程（它已不限扩展）。
+#[cfg(not(target_arch = "wasm32"))]
+pub fn trigger_file_download(
+    runtime: &tokio::runtime::Runtime,
+    filename: &str,
+    bytes: &[u8],
+    _mime: &str,
+) {
+    let filename = filename.to_owned();
+    let bytes = bytes.to_vec();
+    let future = async move {
+        if let Some(file) = rfd::AsyncFileDialog::new()
+            .set_file_name(&filename)
+            .set_directory("~")
+            .save_file()
+            .await
+        {
+            match file.write(&bytes).await {
+                Ok(_) => log::info!("export success: {filename}"),
+                Err(e) => log::error!("export failed: {e}"),
+            }
+        }
+    };
+    runtime.block_on(future);
+}
+
+/// wasm 单文件导出：直接复用浏览器下载流程（mime 自定，保留完整 filename）。
+#[cfg(target_arch = "wasm32")]
+pub fn trigger_file_download(filename: &str, bytes: &[u8], mime: &str) {
+    trigger_download(filename, bytes, mime);
+}
+
+/// **native vault 导出**：弹目录选择对话框（`rfd::pick_folder`）+ `std::fs` 逐文件写盘。
+///
+/// 双 target 红线（AGENTS.md §2）：`rfd` / `tokio` / `std::fs` 目录写仅在此 `#[cfg(not(wasm32))]`
+/// 分支——wasm 无文件系统，走 [`crate::markdown::vault_zip`] + [`trigger_file_download`] 打包下载
+/// （两 target 行为不对称：native 写目录、wasm 下载 zip，属预期）。
+///
+/// 每个文件的写入失败仅记日志、不中断其余文件（尽力导出）。文件名已由
+/// [`crate::markdown::vault_files`] sanitize + 去重，安全拼到所选目录下。
+#[cfg(not(target_arch = "wasm32"))]
+pub fn trigger_vault_dir_export(
+    runtime: &tokio::runtime::Runtime,
+    files: &[crate::markdown::VaultFile],
+) {
+    use std::path::Path;
+    let files: Vec<crate::markdown::VaultFile> = files.to_vec();
+    let future = async move {
+        let Some(dir) = rfd::AsyncFileDialog::new()
+            .set_directory("~")
+            .pick_folder()
+            .await
+        else {
+            log::info!("vault export cancelled");
+            return;
+        };
+        let dir_path = dir.path().to_path_buf();
+        let mut written = 0usize;
+        for f in &files {
+            // 文件名已 sanitize（无路径分隔符 / 非法字符），安全拼接；用 file_name 兜底防穿越。
+            let name = Path::new(&f.filename)
+                .file_name()
+                .map(|s| s.to_owned())
+                .unwrap_or_else(|| f.filename.clone().into());
+            let path = dir_path.join(name);
+            match std::fs::write(&path, &f.bytes) {
+                Ok(_) => written += 1,
+                Err(e) => log::error!("vault write failed for {}: {e}", f.filename),
+            }
+        }
+        log::info!(
+            "vault exported: {written}/{} files -> {dir_path:?}",
+            files.len()
+        );
+    };
+    runtime.block_on(future);
+}

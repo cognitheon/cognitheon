@@ -843,6 +843,70 @@ impl CognitheonApp {
         }
     }
 
+    /// **单节点导出**：把某节点导成一个 `标题.md`（frontmatter + note 原样）触发下载 / 落盘。
+    ///
+    /// 只读图（[`read_resource`]，§3.1）、不改图、不进 history（导出非图变更）。文件名经
+    /// [`crate::markdown::sanitize_filename`]（空标题回退 `node-{id}`）。两 target 都走 io 单文件网关
+    /// [`crate::io::download::trigger_file_download`]（native 弹保存框落盘 / wasm 浏览器下载 Blob）。
+    /// 目标节点失效（跨帧右键菜单期间被删）则仅记日志、不导出（§3.3 容错）。
+    fn export_node_markdown(&self, node_index: petgraph::graph::NodeIndex) {
+        let exported = self.graph_resource.read_resource(|g| {
+            g.get_node(node_index).map(|node| {
+                let base = crate::markdown::sanitize_filename(&node.text, node.id);
+                let filename = format!("{base}.md");
+                // 单节点导出无去重上下文，stem 即 sanitize 后的 base；若它 ≠ 原标题
+                // （标题含非法字符被替换），node_to_markdown 会把原标题注入 aliases 保住链接句柄。
+                let bytes = crate::markdown::node_to_markdown(node, &base).into_bytes();
+                (filename, bytes)
+            })
+        });
+        let Some((filename, bytes)) = exported else {
+            log::warn!("export node markdown: node {node_index:?} not found");
+            return;
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::io::download::trigger_file_download(
+            &self.runtime,
+            &filename,
+            &bytes,
+            "text/markdown",
+        );
+        #[cfg(target_arch = "wasm32")]
+        crate::io::download::trigger_file_download(&filename, &bytes, "text/markdown");
+        log::info!("exported node markdown: {filename}");
+    }
+
+    /// **vault 导出**：全图导成多个 `标题.md` + （存在手画边时）手画边旁路 JSON。
+    ///
+    /// 只读图（§3.1）算出文件清单（[`crate::markdown::vault_files`]，纯函数：sanitize + 去重 + 旁路），
+    /// 不改图、不进 history。两 target **行为不对称**（AGENTS.md §2 各自门控，属预期）：
+    /// - **native**：弹目录选择框，`std::fs` 逐文件写盘（[`crate::io::download::trigger_vault_dir_export`]）。
+    /// - **wasm**：手写 store-only ZIP 打包全部文件（[`crate::markdown::vault_zip`]）→ 浏览器下载
+    ///   `cognitheon-vault.zip`（store-zip 纯 Rust、无新依赖、wasm 安全，规避 zip/flate2 的 wasm 兼容风险）。
+    ///
+    /// 空图（无节点、无手画边）则不导出、仅记日志。
+    fn export_vault(&self) {
+        let files = self
+            .graph_resource
+            .read_resource(crate::markdown::vault_files);
+        if files.is_empty() {
+            log::info!("vault export: nothing to export (empty graph)");
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::io::download::trigger_vault_dir_export(&self.runtime, &files);
+        #[cfg(target_arch = "wasm32")]
+        {
+            let zip = crate::markdown::vault_zip(&files);
+            crate::io::download::trigger_file_download(
+                "cognitheon-vault.zip",
+                &zip,
+                "application/zip",
+            );
+        }
+        log::info!("vault export triggered: {} files", files.len());
+    }
+
     /// 选中并把画布聚焦（居中）到某节点。
     fn focus_node(&self, ctx: &egui::Context, idx: petgraph::graph::NodeIndex) {
         let pos = self.graph_resource.with_resource(|g| {
@@ -1034,6 +1098,19 @@ impl CognitheonApp {
             self.history.mutate(&self.graph_resource, |g| {
                 g.remove_selected();
             });
+            acted = true;
+        }
+
+        ui.separator();
+
+        // 导出此节点为 .md（单节点 Markdown 导出）：frontmatter + note 原样，Obsidian 兼容。
+        // 只读图、不进 history（导出非图变更，见 export_node_markdown 文档）。
+        if ui
+            .button("导出此节点为 .md")
+            .on_hover_text("导出为 Obsidian 兼容的 Markdown（[[链接]] 原样保留）")
+            .clicked()
+        {
+            self.export_node_markdown(node_index);
             acted = true;
         }
 
@@ -1424,6 +1501,23 @@ impl eframe::App for CognitheonApp {
                         crate::io::request_open_file(&ctx, &self.runtime);
                         #[cfg(target_arch = "wasm32")]
                         crate::io::request_open_file(&ctx);
+                    }
+
+                    ui.separator();
+
+                    // 导出为 Markdown（vault）：每节点一个 .md（Obsidian 兼容，[[链接]] 原样）+
+                    // 手画边旁路。native 弹目录选择写盘 / wasm 打包 store-zip 下载（行为不对称、属预期）。
+                    // 只读图、不进 history（导出非图变更，见 export_vault 文档）。
+                    if ui
+                        .button("导出为 Markdown（vault）")
+                        .on_hover_text(
+                            "每个节点导成 .md（Obsidian 兼容，[[链接]] 原样）。\
+                             native 选目录写文件；wasm 下载 zip。",
+                        )
+                        .clicked()
+                    {
+                        ui.close();
+                        self.export_vault();
                     }
 
                     // Quit 仅 native 有意义（关闭桌面窗口）；wasm 是浏览器标签页，无此动作。

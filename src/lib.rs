@@ -8,6 +8,7 @@ pub mod graph;
 pub mod history;
 pub mod input;
 pub mod io;
+pub mod markdown;
 pub mod persistence;
 pub mod resource;
 pub mod ui;

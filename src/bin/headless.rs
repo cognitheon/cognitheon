@@ -24,6 +24,8 @@
 //!   search <query>              全文搜索（标题/正文）
 //!   find <title>                按精确标题找节点，返回 `node <index>`
 //!   orphans                     列出孤立节点（无任何边连接），返回 `orphan <index> <title>` + `ok count <n>`
+//!   export-md <index>           打印某节点的 Markdown（frontmatter + note 原样，Obsidian 兼容）
+//!   export-md                   （无参）打印整个 vault 的导出文件名清单 + 手画边旁路记录数
 //!   reset                       清空
 //!   help                        打印命令
 //!   quit | exit                 退出
@@ -35,7 +37,7 @@ use cognitheon::graph::edge::Edge;
 use cognitheon::graph::graph_impl::Graph;
 use cognitheon::graph::node::Node;
 use cognitheon::resource::CanvasStateResource;
-use cognitheon::{persistence, wikilink};
+use cognitheon::{markdown, persistence, wikilink};
 use petgraph::graph::NodeIndex;
 
 struct Session {
@@ -84,6 +86,7 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
                 "commands: new <x> <y> [title] | title <i> <t> | body <i> <b> | alias <i> <names> | get <i>",
                 "          rm <i> | count | dump | save <path> | load <path> | reset | quit",
                 "          link <i> <j> | parse <i> | backlinks <i> | search <q> | find <title> | orphans",
+                "          export-md [<i>]",
             ]
             .iter()
             .map(|s| s.to_string())
@@ -328,6 +331,38 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
                 .collect();
             lines.push(format!("ok count {}", orphans.len()));
             Ok(Some(lines))
+        }
+
+        // export-md：带 index 打印该节点的 Markdown（换行转义保证一行一记录，与 body/get 同口径）；
+        // 无参时打印整个 vault 的文件清单（节点 .md + 手画边旁路），供无头验证往返保真 / 文件名去重。
+        "export-md" => {
+            if rest.is_empty() {
+                // vault 模式：打印文件名清单（每行一条 `file <name> <bytes>`）+ 旁路边记录数。
+                let files = markdown::vault_files(&s.graph);
+                let mut lines: Vec<String> = files
+                    .iter()
+                    .map(|f| format!("file {} {}", f.filename, f.bytes.len()))
+                    .collect();
+                let manual = markdown::collect_manual_edges(&s.graph);
+                lines.push(format!(
+                    "ok files {} manual_edges {}",
+                    files.len(),
+                    manual.len()
+                ));
+                Ok(Some(lines))
+            } else {
+                // 单节点模式：打印该节点的 Markdown（换行转义成 \n，多行 frontmatter+正文压成多条记录行）。
+                let idx = parse_index(rest)?;
+                let node = s.graph.get_node(idx).ok_or("no such node")?;
+                // 单节点无去重上下文：stem = sanitize 后的文件名 base（与 app.rs 单节点导出同口径）。
+                let stem = markdown::sanitize_filename(&node.text, node.id);
+                let md = markdown::node_to_markdown(node, &stem);
+                // 逐行输出（保留 frontmatter 结构可读），最后一条收尾。
+                let mut lines: Vec<String> =
+                    md.lines().map(|l| format!("md {}", escape(l))).collect();
+                lines.push(format!("ok bytes {}", md.len()));
+                Ok(Some(lines))
+            }
         }
 
         other => Err(format!("unknown command: {other}")),
