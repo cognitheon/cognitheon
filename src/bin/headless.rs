@@ -23,6 +23,7 @@
 //!   refs <i>                    反向引用 + 上下文原话（基于正文 [[标题]] 文本）
 //!   search <query>              全文搜索（标题/正文）
 //!   find <title>                按精确标题找节点，返回 `node <index>`
+//!   find-all <title>            列出所有同名节点（text∪alias，text 优先），`cand <i> <t>` + `ok count <n>`
 //!   orphans                     列出孤立节点（无任何边连接），返回 `orphan <index> <title>` + `ok count <n>`
 //!   export-md <index>           打印某节点的 Markdown（frontmatter + note 原样，Obsidian 兼容）
 //!   export-md                   （无参）打印整个 vault 的导出文件名清单 + 手画边旁路记录数
@@ -91,7 +92,7 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
             [
                 "commands: new <x> <y> [title] | title <i> <t> | body <i> <b> | alias <i> <names> | get <i>",
                 "          rm <i> | count | dump | save <path> | load <path> | reset | quit",
-                "          link <i> <j> | parse <i> | backlinks <i> | search <q> | find <title> | orphans",
+                "          link <i> <j> | parse <i> | backlinks <i> | search <q> | find <title> | find-all <title> | orphans",
                 "          export-md [<i>] | import-md-add <name> <body> | import-md-run",
             ]
             .iter()
@@ -327,6 +328,20 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
                 Some(idx) => Ok(Some(vec![format!("node {}", idx.index())])),
                 None => Err("not found".into()),
             }
+        }
+
+        "find-all" => {
+            if rest.is_empty() {
+                return Err("usage: find-all <title>".into());
+            }
+            // 全量同名（text ∪ alias，text 优先排序）；长度即歧义计数，供消歧 UI 验证。
+            let all = wikilink::find_all_by_title(&s.graph, rest);
+            let mut lines: Vec<String> = all
+                .iter()
+                .map(|i| format!("cand {} {}", i.index(), escape(&s.graph.graph[*i].text)))
+                .collect();
+            lines.push(format!("ok count {}", all.len()));
+            Ok(Some(lines))
         }
 
         "orphans" => {

@@ -287,21 +287,31 @@ impl CognitheonApp {
             ui.weak("（在正文里用 [[标题]] 建立）");
         }
         for lt in &outlinks {
-            let target = self
+            // 全量寻址（text ∪ alias，text 优先排序，§3.1 只读 read_resource）：长度即歧义计数。
+            // [0] 与 find_by_title 选出的"已连接目标"恒为同一节点。
+            let candidates = self
                 .graph_resource
-                .read_resource(|g| wikilink::find_by_title(g, lt));
-            let text = if target.is_some() {
+                .read_resource(|g| wikilink::find_all_by_title(g, lt));
+            let connected = candidates.first().copied();
+            let text = if connected.is_some() {
                 format!("→ {lt}")
             } else {
                 format!("→ {lt}（未创建）")
             };
             if ui
-                .add_enabled(target.is_some(), egui::Button::new(text).frame(false))
+                .add_enabled(connected.is_some(), egui::Button::new(text).frame(false))
                 .clicked()
             {
-                if let Some(t) = target {
+                if let Some(t) = connected {
                     self.focus_node(ui.ctx(), t);
                 }
+            }
+
+            // 歧义提示 + 候选预览：同名（text/alias 命中）多于一个时，展开候选列表供预览/跳转。
+            // v1 克制为"提示 + 跳转任一候选"——note=SSOT 的文本投影模型下无法对单个 [[标题]] 出现
+            // 指定目标，强行 per-link 改连会污染 SSOT；彻底消歧依赖别名或未来 [[标题#id]] 限定符。
+            if candidates.len() > 1 {
+                self.show_ambiguous_candidates(ui, lt, &candidates);
             }
         }
 
@@ -330,6 +340,68 @@ impl CognitheonApp {
             }
             ui.add_space(4.0);
         }
+    }
+
+    /// 同名标题歧义提示 + 候选预览（出链区子项）：某 `[[标题]]` 在图中匹配到多个同名节点
+    /// （text 或 alias 命中 > 1）时，显示「⚠ N 个同名」可展开列表，逐个列出候选的标题/摘要，
+    /// 点候选 → [`Self::focus_node`] 跳转预览。已连接的"第一个"标注「（当前链接目标）」。
+    ///
+    /// 设计约束（v1，纯展示）：只读 graph（§3.1 `read_resource`）、跳转复用 `focus_node`（§3.3
+    /// `NodeIndex` 句柄），**不改 note 原文、不改边、不动 SSOT/序列化/状态机**。不做 per-link 改连——
+    /// 当前 note=SSOT 的文本投影模型下无法对单个 `[[标题]]` 出现位置指定目标，强行改连会污染 SSOT；
+    /// 彻底消歧依赖别名或未来 `[[标题#id]]` 限定符语法。`candidates` 来自
+    /// [`crate::wikilink::find_all_by_title`]（text 优先排序，`[0]` = 当前连接目标）。
+    fn show_ambiguous_candidates(
+        &self,
+        ui: &mut egui::Ui,
+        title: &str,
+        candidates: &[petgraph::graph::NodeIndex],
+    ) {
+        ui.indent(Id::new(("ambig_indent", title)), |ui| {
+            let header = RichText::new(format!("⚠ {} 个同名，已连到第一个", candidates.len()))
+                .color(egui::Color32::from_rgb(0xCC, 0x88, 0x00))
+                .small();
+            egui::CollapsingHeader::new(header)
+                .id_salt(Id::new(("ambig_candidates", title)))
+                .default_open(false)
+                .show(ui, |ui| {
+                    for (i, &cand) in candidates.iter().enumerate() {
+                        // §3.3 失效容错：候选索引理论上可能在收集后被删——取不到就跳过、不 panic。
+                        let info = self.graph_resource.read_resource(|g| {
+                            g.get_node(cand).map(|n| {
+                                let label = if n.text.is_empty() {
+                                    "（无标题）".to_owned()
+                                } else {
+                                    n.text.clone()
+                                };
+                                // 摘要：正文首个非空行（空 query 回退首行，char 安全截断）。
+                                let snippet = wikilink::snippet_around(&n.note, "");
+                                (label, snippet)
+                            })
+                        });
+                        let Some((label, snippet)) = info else {
+                            continue;
+                        };
+                        let marker = if i == 0 {
+                            "（当前链接目标）"
+                        } else {
+                            ""
+                        };
+                        if ui
+                            .add(
+                                egui::Button::new(RichText::new(format!("• {label}{marker}")))
+                                    .frame(false),
+                            )
+                            .clicked()
+                        {
+                            self.focus_node(ui.ctx(), cand);
+                        }
+                        if !snippet.is_empty() {
+                            ui.label(RichText::new(snippet).weak().small());
+                        }
+                    }
+                });
+        });
     }
 
     /// 选中边时的右侧面板分支：恰好一条边 → 标签编辑框；多条边 → 「选中 N 条边」提示。

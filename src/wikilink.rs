@@ -65,6 +65,31 @@ pub fn find_by_title(graph: &Graph, title: &str) -> Option<NodeIndex> {
         })
 }
 
+/// 按标题查找**所有**匹配的节点（`find_by_title` 取第一个的全量版本），用于歧义消歧 UI。
+///
+/// 匹配口径与 [`find_by_title`] / 歧义统计完全一致：**text 命中 ∪ alias 命中**。
+/// 排序保证"第一个"语义一致——**text 命中在前、仅 alias 命中在后**，各组内按节点索引升序；
+/// 同一节点既 text 命中又 alias 命中只计一次（归入 text 组、不重复）。故返回的 `[0]` 与
+/// `find_by_title` 选出的"已连接目标"恒为同一节点。
+///
+/// 返回 `Vec` 长度即歧义计数：`0` = 未创建、`1` = 唯一无歧义、`> 1` = 同名歧义（面板据此提示）。
+pub fn find_all_by_title(graph: &Graph, title: &str) -> Vec<NodeIndex> {
+    let mut out: Vec<NodeIndex> = Vec::new();
+    // 先收 text 精确命中（与 find_by_title 的优先级一致），保持索引升序。
+    for i in graph.graph.node_indices() {
+        if graph.graph[i].text == title {
+            out.push(i);
+        }
+    }
+    // 再收"仅 alias 命中、且未在 text 组里"的节点，追加在后。
+    for i in graph.graph.node_indices() {
+        if graph.graph[i].text != title && graph.graph[i].aliases.iter().any(|a| a == title) {
+            out.push(i);
+        }
+    }
+    out
+}
+
 /// [`resolve_links`] 的结果：本次新建的节点与新建的边数。
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ResolveOutcome {
@@ -1059,6 +1084,67 @@ mod tests {
         assert_eq!(find_by_title(&g, "机器学习"), Some(ml));
         // 无关词不命中
         assert!(find_by_title(&g, "深度学习").is_none());
+    }
+
+    #[test]
+    fn find_all_by_title_no_match_is_empty() {
+        // 空结果：图中无该标题/别名 → 长度 0（面板视作"未创建"）。
+        let (g, _c) = graph_with(&["A", "B"]);
+        assert!(find_all_by_title(&g, "不存在").is_empty());
+        // 空图
+        let (empty, _c0) = graph_with(&[]);
+        assert!(find_all_by_title(&empty, "任何").is_empty());
+    }
+
+    #[test]
+    fn find_all_by_title_single_match() {
+        // 无歧义：唯一命中 → 长度 1，且与 find_by_title 选出的同一节点。
+        let (g, _c) = graph_with(&["唯一", "别的"]);
+        let only = find_by_title(&g, "唯一").unwrap();
+        assert_eq!(find_all_by_title(&g, "唯一"), vec![only]);
+    }
+
+    #[test]
+    fn find_all_by_title_two_same_text() {
+        // 两个同名（text 相同）→ 长度 2，索引升序，首个 = find_by_title 的连接目标。
+        let (g, _c) = graph_with(&["Dup", "Dup", "其它"]);
+        let all = find_all_by_title(&g, "Dup");
+        assert_eq!(all.len(), 2, "两个同名节点应全部返回");
+        // 索引升序：先建的在前
+        assert!(all[0].index() < all[1].index());
+        // 首个与 find_by_title（"取第一个"）一致
+        assert_eq!(all[0], find_by_title(&g, "Dup").unwrap());
+    }
+
+    #[test]
+    fn find_all_by_title_text_then_alias_ordering() {
+        // text 命中 + alias 命中混合：A.text=="K"、B.alias 含 "K" → 返回 [A, B]（text 在前）。
+        let (mut g, _c) = graph_with(&["K", "B"]);
+        let a = find_by_title(&g, "K").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        set_aliases(&mut g, b, &["K"]);
+        let all = find_all_by_title(&g, "K");
+        assert_eq!(all, vec![a, b], "text 命中在前、alias 命中在后");
+        // 首个与 find_by_title（text 优先）一致
+        assert_eq!(all[0], find_by_title(&g, "K").unwrap());
+    }
+
+    #[test]
+    fn find_all_by_title_alias_only_match() {
+        // 仅别名命中：节点标题不同、别名含查询词 → 命中该节点（长度 1）。
+        let (mut g, _c) = graph_with(&["机器学习", "无关"]);
+        let ml = find_by_title(&g, "机器学习").unwrap();
+        set_aliases(&mut g, ml, &["ML"]);
+        assert_eq!(find_all_by_title(&g, "ML"), vec![ml]);
+    }
+
+    #[test]
+    fn find_all_by_title_same_node_text_and_alias_counted_once() {
+        // 同一节点的 text 与某别名都等于查询词（退化情形）→ 只计一次，不重复。
+        let (mut g, _c) = graph_with(&["X"]);
+        let x = find_by_title(&g, "X").unwrap();
+        set_aliases(&mut g, x, &["X"]); // 别名与标题同字
+        assert_eq!(find_all_by_title(&g, "X"), vec![x], "同节点命中只计一次");
     }
 
     #[test]
