@@ -15,6 +15,8 @@ pub struct MdColors {
     pub base: Color32,
     pub heading: Color32,
     pub link: Color32,
+    /// 悬空双链色：`[[X]]` 中 X 当前在图里无对应标题节点时用此色（区别于 `link`）。
+    pub dangling: Color32,
     pub code: Color32,
     pub emph: Color32,
     pub marker: Color32,
@@ -23,10 +25,16 @@ pub struct MdColors {
 impl MdColors {
     pub fn from_visuals(v: &egui::Visuals) -> Self {
         let strong = v.strong_text_color();
+        let theme = if v.dark_mode {
+            egui::Theme::Dark
+        } else {
+            egui::Theme::Light
+        };
         Self {
             base: v.text_color(),
             heading: strong,
             link: Color32::from_rgb(0x4f, 0xa3, 0xff),
+            dangling: crate::colors::wikilink_dangling(theme),
             code: if v.dark_mode {
                 Color32::from_rgb(0xe0, 0xa0, 0x70)
             } else {
@@ -77,7 +85,18 @@ fn line_marker_len(s: &str) -> Option<usize> {
 }
 
 /// 追加一段行内文本，识别 `[[..]]` / `` `..` `` / `**..**` / `*..*`，其余按 base 着色。
-fn append_inline(job: &mut LayoutJob, s: &str, prop: &FontId, mono: &FontId, c: &MdColors) {
+///
+/// `is_known(title)` 判定 `[[title]]` 的目标标题当前是否已在图中存在（trim 后比较）：存在用 `c.link`
+/// 高亮、不存在用 `c.dangling` 悬空色。谓词由调用方在取图锁的闭包外预计算后按值传入，
+/// **本函数不接触任何共享资源 / 图锁**（§3.1：layouter 闭包内绝不取锁）。
+fn append_inline(
+    job: &mut LayoutJob,
+    s: &str,
+    prop: &FontId,
+    mono: &FontId,
+    c: &MdColors,
+    is_known: &dyn Fn(&str) -> bool,
+) {
     let mut plain_start = 0usize;
     let mut i = 0usize;
     while i < s.len() {
@@ -85,7 +104,13 @@ fn append_inline(job: &mut LayoutJob, s: &str, prop: &FontId, mono: &FontId, c: 
         // (结束字节偏移, 字体, 颜色, 斜体, 下划线)
         let token: Option<(usize, &FontId, Color32, bool, bool)> =
             if let Some(rel) = rem.strip_prefix("[[").and_then(|r| r.find("]]")) {
-                Some((i + 2 + rel + 2, prop, c.link, false, true))
+                // 双链：标题原文 = `[[` 与 `]]` 之间（rel 是 `]]` 相对 `rem[2..]` 的字节偏移，
+                // 均落在 ASCII `[`/`]` 边界上，故对中文标题安全、不切多字节）。按 wikilink
+                // 的提取语义 trim 首尾空白后判定是否存在，选高亮色 / 悬空色——着色判定不改动
+                // append 的 range，逐字节覆盖不变量不受影响。
+                let title = rem[2..2 + rel].trim();
+                let color = if is_known(title) { c.link } else { c.dangling };
+                Some((i + 2 + rel + 2, prop, color, false, true))
             } else if let Some(r) = rem.strip_prefix('`') {
                 r.find('`')
                     .map(|rel| (i + 1 + rel + 1, mono, c.code, false, false))
@@ -116,7 +141,17 @@ fn append_inline(job: &mut LayoutJob, s: &str, prop: &FontId, mono: &FontId, c: 
 }
 
 /// 把 Markdown 源码布局成带语法高亮的 [`LayoutJob`]。
-pub fn layout(text: &str, font_size: f32, wrap_width: f32, c: &MdColors) -> LayoutJob {
+///
+/// `is_known(title)`：判定 `[[title]]` 目标标题是否已存在于图中（存在高亮、不存在悬空色）。
+/// 调用方须在取图锁的闭包外预计算（如把"已存在标题集合" `HashSet<String>` 按值 capture），
+/// **本函数纯逻辑、不取任何锁**，可在 egui 布局期的 `TextEdit::layouter` 闭包内安全调用。
+pub fn layout(
+    text: &str,
+    font_size: f32,
+    wrap_width: f32,
+    c: &MdColors,
+    is_known: &dyn Fn(&str) -> bool,
+) -> LayoutJob {
     let prop = FontId::new(font_size, FontFamily::Proportional);
     let mono = FontId::new(font_size, FontFamily::Monospace);
     let mut job = LayoutJob::default();
@@ -142,9 +177,9 @@ pub fn layout(text: &str, font_size: f32, wrap_width: f32, c: &MdColors) -> Layo
             job.append(trimmed, 0.0, fmt(&prop, c.heading, false, false));
         } else if let Some(mlen) = line_marker_len(trimmed) {
             job.append(&trimmed[..mlen], 0.0, fmt(&prop, c.marker, false, false));
-            append_inline(&mut job, &trimmed[mlen..], &prop, &mono, c);
+            append_inline(&mut job, &trimmed[mlen..], &prop, &mono, c, is_known);
         } else {
-            append_inline(&mut job, trimmed, &prop, &mono, c);
+            append_inline(&mut job, trimmed, &prop, &mono, c, is_known);
         }
 
         if !nl.is_empty() {
@@ -158,18 +193,28 @@ pub fn layout(text: &str, font_size: f32, wrap_width: f32, c: &MdColors) -> Layo
 mod tests {
     use super::*;
 
-    /// 高亮后的 LayoutJob.text 必须与源完全一致（逐字节覆盖），否则 TextEdit 会 panic。
-    fn assert_covers(src: &str) {
-        let c = MdColors {
+    const DANGLING: Color32 = Color32::from_rgb(0xff, 0x00, 0xff); // 测试用悬空色（区别于 link 蓝）
+
+    fn test_colors() -> MdColors {
+        MdColors {
             base: Color32::WHITE,
             heading: Color32::RED,
             link: Color32::BLUE,
+            dangling: DANGLING,
             code: Color32::GREEN,
             emph: Color32::YELLOW,
             marker: Color32::GRAY,
-        };
-        let job = layout(src, 14.0, 200.0, &c);
-        assert_eq!(job.text, src, "LayoutJob 必须逐字节覆盖源文本");
+        }
+    }
+
+    /// 高亮后的 LayoutJob.text 必须与源完全一致（逐字节覆盖），否则 TextEdit 会 panic。
+    /// 对"全部标题已知"与"全部标题悬空"两种谓词都断言——两条着色分支都不得破坏覆盖。
+    fn assert_covers(src: &str) {
+        let c = test_colors();
+        for is_known in [&(|_: &str| true) as &dyn Fn(&str) -> bool, &|_| false] {
+            let job = layout(src, 14.0, 200.0, &c, is_known);
+            assert_eq!(job.text, src, "LayoutJob 必须逐字节覆盖源文本");
+        }
     }
 
     #[test]
@@ -181,5 +226,52 @@ mod tests {
         assert_covers("关联 [[知识图谱]] 和 [[第二大脑]] 🚀");
         assert_covers("未闭合 [[ 和 ` 和 ** 和 *");
         assert_covers("嵌套 **粗 *斜* 体** 与 `代码 [[非链接]]`");
+        // 悬空 / 存在混合、中文标题：两种谓词下都逐字节覆盖
+        assert_covers("混合 [[已存在]] 与 [[缺失]] 收尾");
+    }
+
+    /// 找到 `job` 中正好覆盖子串 `needle` 的那一段的颜色（按字节区间命中）。
+    fn color_of_substr(job: &LayoutJob, needle: &str) -> Color32 {
+        let start = job.text.find(needle).expect("needle 应出现在源文本里");
+        let end = start + needle.len();
+        job.sections
+            .iter()
+            .find(|s| s.byte_range.start <= start && s.byte_range.end >= end)
+            .map(|s| s.format.color)
+            .expect("应有一段覆盖该子串")
+    }
+
+    #[test]
+    fn dangling_vs_known_wikilink_color() {
+        let c = test_colors();
+        // 只有 "已存在" 已知；"缺失" 与中文 "知识图谱" 视为悬空。
+        let known = |t: &str| t == "已存在";
+        let src = "看 [[已存在]] 和 [[缺失]] 与 [[知识图谱]]";
+        let job = layout(src, 14.0, 200.0, &c, &known);
+
+        assert_eq!(
+            color_of_substr(&job, "[[已存在]]"),
+            c.link,
+            "已存在 → 高亮色"
+        );
+        assert_eq!(color_of_substr(&job, "[[缺失]]"), DANGLING, "缺失 → 悬空色");
+        assert_eq!(
+            color_of_substr(&job, "[[知识图谱]]"),
+            DANGLING,
+            "缺失中文标题 → 悬空色"
+        );
+    }
+
+    #[test]
+    fn wikilink_title_trimmed_before_lookup() {
+        let c = test_colors();
+        // 谓词按 trim 后标题匹配（与 wikilink::parse_links 的提取语义一致）。
+        let known = |t: &str| t == "A";
+        let job = layout("x [[ A ]] y", 14.0, 200.0, &c, &known);
+        assert_eq!(
+            color_of_substr(&job, "[[ A ]]"),
+            c.link,
+            "首尾空白应被 trim 后再判定存在"
+        );
     }
 }

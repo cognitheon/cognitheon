@@ -26,6 +26,18 @@ pub fn node_background(theme: egui::Theme) -> egui::Color32 {
     }
 }
 
+/// 悬空双链色：编辑态正文里指向"当前不存在标题节点"的 `[[X]]` 用此暗红/橙色渲染，
+/// 提示"此链接当前指向空"（resolve 会在退出编辑时自动补建该节点，故此为瞬态指示）。
+/// 刻意区别于已存在双链的高亮蓝（[`crate::ui::md_highlight::MdColors::link`]）与正文 base，
+/// 暗色主题用偏橙的暖红、亮色主题用更深的砖红以保证对比度。
+pub fn wikilink_dangling(theme: egui::Theme) -> egui::Color32 {
+    if theme == egui::Theme::Light {
+        egui::Color32::from_rgb(0xb0, 0x3a, 0x2e)
+    } else {
+        egui::Color32::from_rgb(0xe8, 0x7a, 0x5a)
+    }
+}
+
 /// 边的默认描线颜色（未 hover / 未选中）。当前边渲染写死 `Color32::GRAY`，集中到此以便统一。
 pub fn edge_default(_theme: egui::Theme) -> egui::Color32 {
     egui::Color32::GRAY

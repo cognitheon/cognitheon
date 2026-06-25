@@ -475,6 +475,13 @@ impl NodeWidget {
     ///   天然与蓝色链接区分、不可点（符合"仅弱显不可跳转"的默认）。
     /// - destination 用纯数字下标（非标题本身），规避中文 / 空格 / markdown 特殊字符的 URL 编码坑；
     ///   普通 markdown 链接 `[x](http://…)` 因 destination 未注册为钩子，仍走原有外链逻辑，互不影响。
+    ///
+    /// 悬空双链的区别色**只在编辑态**实现（见 [`Self::show_editor`] + [`crate::ui::md_highlight`]）：
+    /// 读模式经 `egui_commonmark` 0.23 渲染，其链接一律走 egui 统一的 `Visuals::hyperlink_color`、
+    /// 普通文本无 per-span 颜色入口（`egui_commonmark_backend::Style::to_richtext` 不带 color 字段，
+    /// 链接 `Link::end` 固定 `ui.link` / `ui.hyperlink_to`），无法干净地逐链接着色；且悬空 `[[X]]`
+    /// 在此根本不是链接而是纯文本，更无着色钩子。强行着色须手工拆分文本或绕过 viewer（脆弱 hack），
+    /// 故读模式**保持现状**——核心反馈由编辑态悬空色 + 右侧面板「→ X（未创建）」指示覆盖。
     fn show_body_markdown(&self, ui: &mut egui::Ui, body: &str) {
         // 收集正文里的 [[标题]]，解析出已存在的目标，构造"转换后的 markdown"+ destination→目标 旁表。
         let titles = wikilink::parse_links(body);
@@ -563,10 +570,30 @@ impl NodeWidget {
                 .data_mut(|d| d.insert_temp(body_id.with("wikilink_ac_key"), action));
         }
 
-        // Markdown 源码语法高亮（含 [[双链]] 高亮）
+        // Markdown 源码语法高亮（含 [[双链]] 高亮）。
         let md_colors = crate::ui::md_highlight::MdColors::from_visuals(ui.visuals());
+        // 悬空双链指示：预计算"当前图中已存在的非空标题集合"，按值 capture 进 layouter 闭包。
+        // §3.1：取图锁只发生在此 read_resource 闭包内（随即释放）；layouter 闭包内只查这份已
+        // 克隆的 HashSet、绝不再触图锁（layouter 在 egui 布局期被回调，闭包内取 graph 锁有重入
+        // 风险）。md_highlight 据此把指向"不存在标题"的 [[X]] 渲染为悬空色（resolve 退出编辑时
+        // 会自动补建该节点，故此为瞬态视觉提示，不改 resolve 自动建点模型、不改写 note 原文）。
+        let known_titles: std::collections::HashSet<String> =
+            self.graph_resource.read_resource(|g| {
+                g.graph
+                    .node_indices()
+                    .map(|i| g.graph[i].text.clone())
+                    .filter(|t| !t.is_empty())
+                    .collect()
+            });
         let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
-            let job = crate::ui::md_highlight::layout(buf.as_str(), 14.0, wrap_width, &md_colors);
+            let is_known = |title: &str| known_titles.contains(title);
+            let job = crate::ui::md_highlight::layout(
+                buf.as_str(),
+                14.0,
+                wrap_width,
+                &md_colors,
+                &is_known,
+            );
             ui.fonts_mut(|f| f.layout_job(job))
         };
         let br = egui::ScrollArea::vertical()
