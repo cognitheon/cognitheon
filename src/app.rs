@@ -256,6 +256,7 @@ impl CognitheonApp {
             .read_resource(|g| g.get_selected_nodes().first().copied());
         let Some(idx) = selected else {
             ui.weak("选中一个节点，查看它的出链与反向引用。");
+            self.show_orphan_nodes(ui);
             return;
         };
 
@@ -321,6 +322,44 @@ impl CognitheonApp {
                 ui.label(RichText::new(c.as_str()).weak().small());
             }
             ui.add_space(4.0);
+        }
+    }
+
+    /// 未选中节点时的全局视图：列出图中的「孤立节点」（无任何边连接），点击跳转聚焦。
+    ///
+    /// 大图卫生工具——把无出入边、未被 `[[…]]` 引用也未手画连接的节点集中暴露出来，便于发现盲点。
+    /// 数据只读经 [`crate::wikilink::orphan_nodes`]（`read_resource`，§3.1），跳转复用 [`Self::focus_node`]
+    /// （选中 + 居中，§3.3 用 `NodeIndex` 句柄）。放在「未选中」分支，不喧宾夺主、不与选中态的出链/反链争位。
+    fn show_orphan_nodes(&self, ui: &mut egui::Ui) {
+        let orphans = self.graph_resource.read_resource(wikilink::orphan_nodes);
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.label(
+            RichText::new(format!("孤立节点（{}）", orphans.len()))
+                .weak()
+                .small(),
+        );
+        if orphans.is_empty() {
+            ui.weak("（没有孤立节点，连接很健康）");
+            return;
+        }
+        for &idx in &orphans {
+            let title = self
+                .graph_resource
+                .read_resource(|g| g.get_node(idx).map(|n| n.text.clone()));
+            let Some(title) = title else { continue };
+            let label = if title.is_empty() {
+                "（无标题）".to_owned()
+            } else {
+                title
+            };
+            if ui
+                .add(egui::Button::new(RichText::new(format!("• {label}"))).frame(false))
+                .clicked()
+            {
+                self.focus_node(ui.ctx(), idx);
+            }
         }
     }
 

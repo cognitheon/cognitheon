@@ -22,6 +22,7 @@
 //!   refs <i>                    反向引用 + 上下文原话（基于正文 [[标题]] 文本）
 //!   search <query>              全文搜索（标题/正文）
 //!   find <title>                按精确标题找节点，返回 `node <index>`
+//!   orphans                     列出孤立节点（无任何边连接），返回 `orphan <index> <title>` + `ok count <n>`
 //!   reset                       清空
 //!   help                        打印命令
 //!   quit | exit                 退出
@@ -81,7 +82,7 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
             [
                 "commands: new <x> <y> [title] | title <i> <t> | body <i> <b> | get <i>",
                 "          rm <i> | count | dump | save <path> | load <path> | reset | quit",
-                "          link <i> <j> | parse <i> | backlinks <i> | search <q> | find <title>",
+                "          link <i> <j> | parse <i> | backlinks <i> | search <q> | find <title> | orphans",
             ]
             .iter()
             .map(|s| s.to_string())
@@ -297,6 +298,16 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
                 Some(idx) => Ok(Some(vec![format!("node {}", idx.index())])),
                 None => Err("not found".into()),
             }
+        }
+
+        "orphans" => {
+            let orphans = wikilink::orphan_nodes(&s.graph);
+            let mut lines: Vec<String> = orphans
+                .iter()
+                .map(|o| format!("orphan {} {}", o.index(), escape(&s.graph.graph[*o].text)))
+                .collect();
+            lines.push(format!("ok count {}", orphans.len()));
+            Ok(Some(lines))
         }
 
         other => Err(format!("unknown command: {other}")),

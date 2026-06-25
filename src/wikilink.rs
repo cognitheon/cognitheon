@@ -209,6 +209,31 @@ pub fn snippet_around(note: &str, query: &str) -> String {
     line.chars().take(80).collect()
 }
 
+/// 孤立节点：图中**没有任何边连接**的节点（无向度数为 0），按节点索引顺序返回。
+///
+/// 大图卫生 / 发现盲点的实用工具（同 Obsidian 图谱「孤立笔记」过滤）：列出既无出边也无入边、
+/// 既不被 `[[…]]` 引用也未手画连接的节点。判定用 `edges_directed(Incoming/Outgoing)`——
+/// 比 `neighbors_undirected` 语义更显式，且对**自环**正确：自环边同时出现在该节点的入边与出边里，
+/// 故自带自环的节点**不算孤立**（它有边）。空图返回空集。
+pub fn orphan_nodes(graph: &Graph) -> Vec<NodeIndex> {
+    graph
+        .graph
+        .node_indices()
+        .filter(|&idx| {
+            graph
+                .graph
+                .edges_directed(idx, petgraph::Direction::Incoming)
+                .next()
+                .is_none()
+                && graph
+                    .graph
+                    .edges_directed(idx, petgraph::Direction::Outgoing)
+                    .next()
+                    .is_none()
+        })
+        .collect()
+}
+
 /// 全文搜索：标题或正文包含 `query`（**大小写不敏感**的子串匹配）的节点，按节点索引顺序返回。
 pub fn search(graph: &Graph, query: &str) -> Vec<NodeIndex> {
     if query.is_empty() {
@@ -357,6 +382,109 @@ mod tests {
         let (g, _c) = graph_with(&["Hello World"]);
         assert_eq!(search(&g, "hello").len(), 1);
         assert_eq!(search(&g, "WORLD").len(), 1);
+    }
+
+    #[test]
+    fn orphan_nodes_empty_graph_is_empty() {
+        let (g, _c) = graph_with(&[]);
+        assert!(orphan_nodes(&g).is_empty(), "空图无孤立节点");
+    }
+
+    #[test]
+    fn orphan_nodes_all_isolated() {
+        // 三个互不相连的节点 → 全部孤立，按索引顺序返回。
+        let (g, _c) = graph_with(&["A", "B", "C"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        let c = find_by_title(&g, "C").unwrap();
+        assert_eq!(orphan_nodes(&g), vec![a, b, c]);
+    }
+
+    #[test]
+    fn orphan_nodes_chain_has_none() {
+        // A -> B -> C 链：每个节点都有边，无孤立。
+        let (mut g, canvas) = graph_with(&["A", "B", "C"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        let c = find_by_title(&g, "C").unwrap();
+        g.add_edge(Edge::new(
+            a,
+            b,
+            egui::pos2(0.0, 0.0),
+            egui::pos2(0.0, 0.0),
+            canvas.clone(),
+        ));
+        g.add_edge(Edge::new(
+            b,
+            c,
+            egui::pos2(0.0, 0.0),
+            egui::pos2(0.0, 0.0),
+            canvas.clone(),
+        ));
+        assert!(orphan_nodes(&g).is_empty(), "链式结构无孤立节点");
+    }
+
+    #[test]
+    fn orphan_nodes_incoming_only_not_orphan() {
+        // 只有入边的节点也不算孤立（出/入任一非空即有边）。
+        let (mut g, canvas) = graph_with(&["A", "B"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        g.add_edge(Edge::new(
+            a,
+            b,
+            egui::pos2(0.0, 0.0),
+            egui::pos2(0.0, 0.0),
+            canvas.clone(),
+        ));
+        // A 有出边、B 有入边，二者都不孤立。
+        assert!(orphan_nodes(&g).is_empty());
+    }
+
+    #[test]
+    fn orphan_nodes_self_loop_is_not_orphan() {
+        // 自环：边同时是入边与出边，故有边 → 不算孤立（语义：孤立 = 无任何边）。
+        let (mut g, canvas) = graph_with(&["A", "B"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        g.add_edge(Edge::new(
+            a,
+            a,
+            egui::pos2(0.0, 0.0),
+            egui::pos2(0.0, 0.0),
+            canvas.clone(),
+        ));
+        assert_eq!(orphan_nodes(&g), vec![b], "仅自环的 A 不孤立，B 才孤立");
+    }
+
+    #[test]
+    fn orphan_nodes_appears_after_edge_removed() {
+        // 删边后端点恢复孤立。
+        let (mut g, canvas) = graph_with(&["A", "B"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        g.add_edge(Edge::new(
+            a,
+            b,
+            egui::pos2(0.0, 0.0),
+            egui::pos2(0.0, 0.0),
+            canvas.clone(),
+        ));
+        assert!(orphan_nodes(&g).is_empty());
+
+        let eidx = g.graph.edge_indices().next().unwrap();
+        g.graph.remove_edge(eidx);
+        assert_eq!(orphan_nodes(&g), vec![a, b], "删边后两端都回到孤立");
+    }
+
+    #[test]
+    fn orphan_nodes_wiki_edge_makes_target_non_orphan() {
+        // wiki 自动边与手画边一视同仁：被 [[…]] 连上的目标不再孤立。
+        let (mut g, canvas) = graph_with(&["A", "B"]);
+        let a = find_by_title(&g, "A").unwrap();
+        g.get_node_mut(a).unwrap().note = "[[B]]".to_owned();
+        resolve_links(&mut g, &canvas, a);
+        assert!(orphan_nodes(&g).is_empty(), "wiki 边连接后无孤立节点");
     }
 
     #[test]
