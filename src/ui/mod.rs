@@ -6,6 +6,7 @@ pub mod edge_trait;
 pub mod helpers;
 pub mod line_edge;
 pub mod md_highlight;
+pub mod minimap;
 pub mod node;
 pub mod node_render_observer;
 pub mod temp_edge;

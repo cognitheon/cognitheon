@@ -292,6 +292,22 @@ pub fn search(graph: &Graph, query: &str) -> Vec<NodeIndex> {
         .collect()
 }
 
+/// 所有节点位置（画布坐标，AGENTS.md §3.2）的最小包围盒。空图返回 `None`。
+///
+/// 纯函数、不依赖 GUI / observer（直接读 `Node.position`，避一帧延迟）：是 minimap
+/// 等比投影与 `app.rs::zoom_to_fit` 的共享几何基元，便于无头单测（空图 `None`、单节点、
+/// 共线、多点）。**仅算包围盒**——退化（单节点 / 共线 → width 或 height = 0）的最小尺寸
+/// 兜底留给调用方（minimap 投影、zoom_to_fit 各自 `max(1.0)`），本函数保持"如实反映几何"。
+pub fn minimap_bbox(graph: &Graph) -> Option<egui::Rect> {
+    let mut it = graph.graph.node_indices().map(|i| graph.graph[i].position);
+    let first = it.next()?;
+    let mut rect = egui::Rect::from_min_max(first, first);
+    for p in it {
+        rect = rect.union(egui::Rect::from_min_max(p, p));
+    }
+    Some(rect)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -818,5 +834,64 @@ mod tests {
             "缺 aliases 字段应默认空 Vec（向后兼容）"
         );
         assert_eq!(old_node.text, "A", "其余字段应保真");
+    }
+
+    /// 以给定画布坐标建图（节点标题取序号），供 minimap_bbox 的几何单测使用。
+    fn graph_with_positions(points: &[(f32, f32)]) -> Graph {
+        let canvas = CanvasStateResource::new(CanvasState::default());
+        let mut g = Graph::default();
+        for (i, (x, y)) in points.iter().enumerate() {
+            let id = canvas.read_resource(|c| c.new_node_id());
+            g.add_node(Node {
+                id,
+                position: egui::pos2(*x, *y),
+                text: i.to_string(),
+                note: String::new(),
+                aliases: Vec::new(),
+            });
+        }
+        g
+    }
+
+    #[test]
+    fn minimap_bbox_empty_is_none() {
+        let g = graph_with_positions(&[]);
+        assert!(minimap_bbox(&g).is_none(), "空图无包围盒");
+    }
+
+    #[test]
+    fn minimap_bbox_single_node_is_degenerate_point() {
+        let g = graph_with_positions(&[(12.0, -7.0)]);
+        let bbox = minimap_bbox(&g).expect("单节点应有包围盒");
+        assert_eq!(bbox.min, egui::pos2(12.0, -7.0));
+        assert_eq!(bbox.max, egui::pos2(12.0, -7.0));
+        // 退化为点：宽高均 0（最小尺寸兜底由调用方负责，本函数如实反映几何）。
+        assert_eq!(bbox.width(), 0.0);
+        assert_eq!(bbox.height(), 0.0);
+    }
+
+    #[test]
+    fn minimap_bbox_collinear_has_zero_extent_on_one_axis() {
+        // 水平共线：y 恒定 → 高度 0、宽度非 0。
+        let gh = graph_with_positions(&[(0.0, 5.0), (10.0, 5.0), (-4.0, 5.0)]);
+        let bh = minimap_bbox(&gh).unwrap();
+        assert_eq!(bh.min, egui::pos2(-4.0, 5.0));
+        assert_eq!(bh.max, egui::pos2(10.0, 5.0));
+        assert_eq!(bh.height(), 0.0);
+        assert_eq!(bh.width(), 14.0);
+
+        // 垂直共线：x 恒定 → 宽度 0、高度非 0。
+        let gv = graph_with_positions(&[(3.0, 0.0), (3.0, 20.0), (3.0, -6.0)]);
+        let bv = minimap_bbox(&gv).unwrap();
+        assert_eq!(bv.width(), 0.0);
+        assert_eq!(bv.height(), 26.0);
+    }
+
+    #[test]
+    fn minimap_bbox_multi_node_union() {
+        let g = graph_with_positions(&[(-10.0, -20.0), (30.0, 5.0), (0.0, 40.0), (15.0, -25.0)]);
+        let bbox = minimap_bbox(&g).unwrap();
+        assert_eq!(bbox.min, egui::pos2(-10.0, -25.0));
+        assert_eq!(bbox.max, egui::pos2(30.0, 40.0));
     }
 }

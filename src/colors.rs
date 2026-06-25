@@ -70,3 +70,40 @@ pub fn edge_label_bg(theme: egui::Theme) -> egui::Color32 {
         egui::Color32::from_rgba_premultiplied(45, 45, 45, 215)
     }
 }
+
+/// 小地图（minimap）背景半透明垫底——让缩略图脱离画布网格背景而成一块清晰浮层。两主题分浅/深底。
+pub fn minimap_bg(theme: egui::Theme) -> egui::Color32 {
+    if theme == egui::Theme::Light {
+        egui::Color32::from_rgba_unmultiplied(245, 245, 247, 225)
+    } else {
+        egui::Color32::from_rgba_unmultiplied(28, 28, 30, 220)
+    }
+}
+
+/// 小地图外框描边——比背景略亮的中性灰，勾勒浮层边界。两主题分浅/深。
+pub fn minimap_frame(theme: egui::Theme) -> egui::Color32 {
+    if theme == egui::Theme::Light {
+        egui::Color32::from_rgb(170, 170, 175)
+    } else {
+        egui::Color32::from_rgb(90, 90, 95)
+    }
+}
+
+/// 小地图内单个节点的点色——与节点边框同色系的蓝，缩略可辨。两主题分浅/深以保证对比度。
+pub fn minimap_node(theme: egui::Theme) -> egui::Color32 {
+    if theme == egui::Theme::Light {
+        egui::Color32::from_rgb(60, 100, 160)
+    } else {
+        egui::Color32::from_rgb(150, 180, 220)
+    }
+}
+
+/// 小地图视口框描边——醒目橙，区别于节点点的蓝。两主题统一。
+pub fn minimap_viewport_stroke(_theme: egui::Theme) -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(230, 130, 60, 230)
+}
+
+/// 小地图视口框极淡填充——提示"当前视野范围"但不挡住底下的节点点。两主题统一。
+pub fn minimap_viewport_fill(_theme: egui::Theme) -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(230, 130, 60, 28)
+}

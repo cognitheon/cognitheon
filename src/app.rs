@@ -706,15 +706,8 @@ impl CognitheonApp {
     /// 缩放与平移，写回 `CanvasState.transform`（坐标变换的唯一权威）。缩放钳到 §3.2 的 `[0.1, 100]`。
     /// 空图 / 无节点时不动。
     fn zoom_to_fit(&self, ctx: &egui::Context) {
-        let bbox = self.graph_resource.read_resource(|g| {
-            let mut it = g.graph.node_indices().map(|i| g.graph[i].position);
-            let first = it.next()?;
-            let mut rect = egui::Rect::from_min_max(first, first);
-            for p in it {
-                rect = rect.union(egui::Rect::from_min_max(p, p));
-            }
-            Some(rect)
-        });
+        // 包围盒计算与 minimap 共享同一纯函数（直接读 Node.position，画布坐标 §3.2）。
+        let bbox = self.graph_resource.read_resource(wikilink::minimap_bbox);
         let Some(bbox) = bbox else {
             return;
         };
@@ -1540,7 +1533,20 @@ impl eframe::App for CognitheonApp {
         egui::CentralPanel::default()
             // .frame(egui::Frame::default().outer_margin(egui::Margin::same(3.0)))
             .show_inside(ui, |ui| {
-                ui.add(&mut self.canvas_widget);
+                // 画布主渲染（内部依次 draw_grid → state_manager → render_graph → 粒子）。
+                // 取回 Response.rect = 画布实际屏幕区域，供 minimap 锚定右下角 + 反算视口框。
+                let canvas_rect = ui.add(&mut self.canvas_widget).rect;
+
+                // 小地图 / 鸟瞰图：右下角常驻只读投影 + 点击平移。在画布（含 render_graph）渲染
+                // 之后调用，z-order 在节点之上（§3.5）；空图自动隐藏。它用独立的 Area 消费自身
+                // 指针交互、不穿透画布状态机；只读 Node.position 投影、点击平移仅改
+                // transform.translation（scaling 不变，§3.2）。
+                crate::ui::minimap::show_minimap(
+                    &ctx,
+                    canvas_rect,
+                    &self.graph_resource,
+                    &self.canvas_resource,
+                );
 
                 // egui::Window::new("test")
                 //     .default_size(Vec2::new(800.0, 600.0))

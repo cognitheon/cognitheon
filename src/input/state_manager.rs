@@ -24,6 +24,18 @@ use super::button_state::ButtonState;
 /// 手抖的容差，而非画布距离（§3.2 区分屏幕/画布坐标）。取值参考 egui 默认拖拽起判阈（约 6px）。
 const SECONDARY_DRAG_THRESHOLD: f32 = 6.0;
 
+/// 画布门控的纯判定：给定指针处**顶层 layer 的 z-order**（`Context::layer_id_at(p).map(|l| l.order)`，
+/// `None` = 指针不在任何 Area / 不在窗口内），判断是否落在**前景浮层**上（→ 应关掉画布门控）。
+///
+/// 规则（§3.4）：`Order::Background` 是 egui 注册的整窗背景层 + 各 Panel + 其中的节点 widget 所在层
+/// → 放行（`false`）；其它 order（`Foreground`/`Tooltip`/`Debug`/`Middle`，即 minimap / 命令面板 /
+/// 帮助 / 右键菜单 popup 等独立 Area）→ 关门控（`true`）。`None` 同样放行（指针不在窗口内时不关门控）。
+///
+/// 抽成纯函数是为可无头单测该不变量（见本文件 `tests`），不依赖能否在 headless 下取真实 layer。
+fn pointer_over_foreground(top_order: Option<egui::Order>) -> bool {
+    matches!(top_order, Some(order) if order != egui::Order::Background)
+}
+
 /// 存储输入处理所需的上下文数据
 #[derive(Debug)]
 pub struct InputContext {
@@ -235,7 +247,33 @@ impl InputStateManager {
         // 区域门控：指针是否落在 canvas 区域内（其它面板如右侧链接面板在外）。
         // 用 canvas 的 drag response 判定——节点卡片在 canvas rect 内、`contains_pointer()`
         // 仍为 true，故节点点击/拖拽不受影响；只排除 canvas rect 外（右侧面板等）的事件。
-        let pointer_in_canvas = canvas_response.contains_pointer();
+        //
+        // 叠加「指针不在任何前景 Area 上」判定（§3.4）：`contains_pointer()` 只在另一层 widget
+        // **完全覆盖整块画布**时才把画布移出命中表，故 200x140 的 minimap、命令面板、帮助浮层、
+        // 右键菜单 popup 等**局部**前景 `Area`(Foreground) 覆盖画布时，`contains_pointer()` 仍为
+        // true，点击会被状态机误当 Canvas 处理（清选区 / 入框选）。
+        //
+        // 用 `Context::layer_id_at` 精确判定指针**顶层**落在哪个 layer（egui 0.34.3：经
+        // `Memory::layer_id_at` → `Areas::layer_id_at`，逆序遍历 z-order 返回**最顶层、可交互、
+        // 可见**且 rect 命中指针的 layer）：
+        // - 节点 / 空白画布：egui 启动期注册了一个覆盖整窗 `content_rect` 的 `LayerId::background()`
+        //   Area（`order == Background`，见 context.rs `set_state`）；CentralPanel 与其中的节点
+        //   widget 都画在这个 Background 层上，无更高层覆盖 → 顶层 = Background → `over_foreground = false`。
+        // - 前景浮层：minimap / 命令面板 / 帮助 / 右键菜单 popup 都是独立 `Order::Foreground` 的 Area
+        //   → 顶层 = Foreground → `over_foreground = true`。
+        // - 右侧 SidePanel：仍落在 Background 层，但 `canvas_response.contains_pointer()` 本就为 false
+        //   （画布 response 的 rect 不含面板区），门控照常 false，不回归。
+        //
+        // 取指针位置用 `pointer_interact_pos()`（= `pointer.interact_pos()`，点击/拖拽时忽略
+        // PointerGone，与命中判定同源）；None（指针不在窗口内）时视为不在前景 Area 上。
+        // 故此处只在指针真正落在前景 Area 上时关掉画布门控，绝不误伤 Background 层的节点点击 /
+        // 框选 / 建点，也不影响右侧 Panel。
+        let top_layer = ui
+            .ctx()
+            .pointer_interact_pos()
+            .and_then(|p| ui.ctx().layer_id_at(p));
+        let over_foreground = pointer_over_foreground(top_layer.map(|lid| lid.order));
+        let pointer_in_canvas = canvas_response.contains_pointer() && !over_foreground;
 
         // 处理输入事件，获取当前输入目标
         let target = self.determine_target(ui);
@@ -1295,5 +1333,162 @@ impl InputStateManager {
             screen_rect,
             ParticleCallback::new([mouse_pos.x, mouse_pos.y], dt, screen_rect),
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pointer_over_foreground;
+    use egui::{Area, Id, Order, Pos2, Rect, Sense};
+    use std::cell::Cell;
+
+    /// 纯判定单测（§3.4 画布门控不变量的回归守卫）：顶层 order → 是否关画布门控。
+    ///
+    /// Background（整窗背景层 + Panel + 节点 widget 所在层）→ 放行；其余前景 order
+    /// （minimap / 命令面板 / 帮助 / 右键菜单 popup 等独立 Area）→ 关门控；None（不在窗口内）→ 放行。
+    #[test]
+    fn foreground_gate_decision() {
+        // 节点 / 空白画布：顶层 = Background → 放行（不关门控）。
+        assert!(!pointer_over_foreground(Some(Order::Background)));
+        // minimap / 命令面板 / 帮助 / 右键菜单：顶层 = 前景 Area → 关门控。
+        assert!(pointer_over_foreground(Some(Order::Foreground)));
+        assert!(pointer_over_foreground(Some(Order::Tooltip)));
+        assert!(pointer_over_foreground(Some(Order::Middle)));
+        assert!(pointer_over_foreground(Some(Order::Debug)));
+        // 指针不在任何 Area（窗口外）→ 放行。
+        assert!(!pointer_over_foreground(None));
+    }
+
+    /// minimap 外框尺寸 / 留白（与 `crate::ui::minimap` 常量同值，仅供测试复刻布局）。
+    const MINI_SIZE: egui::Vec2 = egui::vec2(200.0, 140.0);
+    const MINI_MARGIN: egui::Vec2 = egui::vec2(12.0, 12.0);
+
+    /// 复刻 app.rs 面板顺序跑一帧（`run_ui` 取根 ui + `Panel::*::show_inside`，与 app.rs 同构）：
+    /// 顶/底 `Panel` + 右 `Panel` + `CentralPanel`{ allocate_exact_size(drag) 当画布 +
+    /// Area(Foreground) 当 minimap }。
+    ///
+    /// 在闭包里把当帧实际算出的 **minimap 外框 frame_rect**（依真实 CentralPanel 布局，而非
+    /// 屏幕硬编码）写回 `mini_rect_out`，并按 `pointer` 查询该位置顶层 layer order 写回 `order_out`。
+    fn run_one_frame(
+        ctx: &egui::Context,
+        screen: Rect,
+        pointer: Option<Pos2>,
+        mini_rect_out: &Cell<Option<Rect>>,
+        order_out: &Cell<Option<Order>>,
+    ) {
+        let mut input = egui::RawInput {
+            screen_rect: Some(screen),
+            ..Default::default()
+        };
+        if let Some(p) = pointer {
+            input.events.push(egui::Event::PointerMoved(p));
+        }
+
+        // 用 run_ui（非 deprecated）取根 `&mut Ui`，复刻 app.rs 经 `Panel::*::show_inside(ui, …)`
+        // 把面板嵌进根 ui 的真实结构（而非 Context 顶层 show）。
+        let _ = ctx.run_ui(input, |ui| {
+            egui::Panel::top("top_panel").show_inside(ui, |ui| {
+                ui.label("top");
+            });
+            egui::Panel::bottom("bottom_panel").show_inside(ui, |ui| {
+                ui.label("bottom");
+            });
+            egui::Panel::right("links_panel")
+                .default_size(260.0)
+                .show_inside(ui, |ui| {
+                    ui.label("side");
+                });
+            egui::CentralPanel::default().show_inside(ui, |ui| {
+                // 画布：占满 CentralPanel 可用区、Sense::drag()（复刻 CanvasWidget 的 allocate）。
+                let avail = ui.available_size();
+                let (canvas_rect, _resp) = ui.allocate_exact_size(avail, Sense::drag());
+
+                // minimap：独立 Area(Foreground)，锚到画布区域右下角（与 minimap.rs 同构）。
+                let max = canvas_rect.max - MINI_MARGIN;
+                let min = max - MINI_SIZE;
+                let frame_rect = Rect::from_min_max(min, max);
+                mini_rect_out.set(Some(frame_rect));
+                Area::new(Id::new("minimap_area"))
+                    .order(Order::Foreground)
+                    .fixed_pos(frame_rect.min)
+                    .movable(false)
+                    .interactable(true)
+                    .show(ui.ctx(), |ui| {
+                        ui.set_clip_rect(frame_rect);
+                        // allocate_rect 占满外框：让该 Foreground Area 的**测量尺寸**覆盖
+                        // frame_rect，使 `layer_id_at` 能在此区域命中该 Area（仅 interact 不
+                        // 推进 cursor、Area 测得近零尺寸，layer_id_at 会漏掉它，复刻 minimap.rs）。
+                        let _ = ui.allocate_rect(frame_rect, Sense::click());
+                    });
+
+                // 在所有面板 / Area 登记后查询顶层 layer（与 state_manager.update 同源取位）。
+                let ctx = ui.ctx();
+                order_out.set(
+                    ctx.pointer_interact_pos()
+                        .and_then(|p| ctx.layer_id_at(p))
+                        .map(|lid| lid.order),
+                );
+            });
+        });
+    }
+
+    /// 无头实证（§3.4）：复刻 app.rs 面板顺序，断言 `layer_id_at` 对各情形的真实返回——
+    /// 画布空白 / 节点位置 → `Background`（门控放行）；minimap 区域 → `Foreground`（门控关闭）。
+    /// 这是上一版错误（`is_pointer_over_egui` 对画布内一切点恒 true、门控恒 false）的回归守卫。
+    ///
+    /// minimap 测试点不硬编码：先空跑两帧 priming（让 minimap Area 进上一帧可见集、布局稳定），
+    /// 同时从闭包取回**当帧真实 frame_rect**，据其中心定位 minimap 测试点。
+    #[test]
+    fn layer_id_at_distinguishes_minimap_from_canvas() {
+        let ctx = egui::Context::default();
+        let screen = Rect::from_min_size(Pos2::ZERO, egui::vec2(1000.0, 700.0));
+        let mini_rect = Cell::new(None);
+        let order = Cell::new(None);
+
+        // priming：无指针跑两帧，让 Areas/prev_pass_state 稳定 + 取回真实 minimap frame_rect。
+        run_one_frame(&ctx, screen, None, &mini_rect, &order);
+        run_one_frame(&ctx, screen, None, &mini_rect, &order);
+        let frame_rect = mini_rect.get().expect("minimap frame_rect 应已算出");
+        // minimap 中心（远离边界，稳落框内）；画布空白取 minimap 左上方一片远离 SidePanel 的区域。
+        let mini_center = frame_rect.center();
+        // 画布空白点：CentralPanel 内、远离右侧 SidePanel 与右下 minimap 的左上区域。
+        let canvas_empty = Pos2::new(120.0, 200.0);
+        // 节点同属 Background 层 widget——用画布中心模拟，同样应落 Background。
+        let node_like = Pos2::new(350.0, 320.0);
+
+        // 画布空白 → Background（门控放行）。
+        run_one_frame(&ctx, screen, Some(canvas_empty), &mini_rect, &order);
+        let empty_order = order.get();
+        assert_eq!(
+            empty_order,
+            Some(Order::Background),
+            "画布空白处顶层应为 Background（门控放行），实测 {empty_order:?}"
+        );
+        assert!(
+            !pointer_over_foreground(empty_order),
+            "画布空白 → 门控放行（over_foreground=false）"
+        );
+
+        // 节点位置 → Background（门控放行）。
+        run_one_frame(&ctx, screen, Some(node_like), &mini_rect, &order);
+        let node_order = order.get();
+        assert_eq!(
+            node_order,
+            Some(Order::Background),
+            "节点位置顶层应为 Background（门控放行），实测 {node_order:?}"
+        );
+
+        // minimap 中心 → Foreground（门控关闭）。
+        run_one_frame(&ctx, screen, Some(mini_center), &mini_rect, &order);
+        let mini_order = order.get();
+        assert_eq!(
+            mini_order,
+            Some(Order::Foreground),
+            "minimap 区域顶层应为 Foreground（门控关闭），实测 {mini_order:?}"
+        );
+        assert!(
+            pointer_over_foreground(mini_order),
+            "minimap → 门控关闭（over_foreground=true）"
+        );
     }
 }
