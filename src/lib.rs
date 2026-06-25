@@ -6,6 +6,7 @@ pub mod gpu_render;
 pub mod graph;
 pub mod history;
 pub mod input;
+pub mod io;
 pub mod persistence;
 pub mod resource;
 pub mod ui;

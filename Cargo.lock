@@ -681,6 +681,7 @@ dependencies = [
  "egui_commonmark",
  "env_logger",
  "getrandom 0.4.3",
+ "js-sys",
  "log",
  "petgraph",
  "rand",
@@ -689,6 +690,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "typetag",
+ "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
 ]

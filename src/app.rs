@@ -3,8 +3,6 @@ use std::sync::Arc;
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Align, Color32, ComboBox, FontId, Id, Layout, RichText};
 #[cfg(not(target_arch = "wasm32"))]
-use rfd::AsyncFileDialog;
-#[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::{Builder, Runtime};
 
 use crate::history::History;
@@ -778,6 +776,45 @@ impl CognitheonApp {
         });
     }
 
+    /// 用一份序列化字节替换整图（Save/Load 的 **native 与 wasm 共享路径**，避免两套漂移）。
+    ///
+    /// 解析复用 [`crate::persistence::load`]（格式分派 + 旧 `.cnt` 兼容，AGENTS.md §7），失败仅记日志、
+    /// 不动当前图。替换语义与原 File 菜单 Load 完全一致（撤销 Load 让旧图整体复活，视图/缩放与 id
+    /// 计数器不回滚）：
+    /// 1. `discard_staged`：作废任何在途暂存快照（如正编辑/拖拽中触发导入），它对新图无意义；
+    /// 2. 在替换资源 `Arc` **之前**、写闭包之外克隆"载入前"的图 `record` 进 undo（§3.1）；
+    /// 3. 把新 `Graph` / `CanvasState` 装进**新** `Resource`（替换 Arc，非原地写）；
+    /// 4. 用**同一个** `self.history` 句柄重建 `canvas_widget`（§3.1 共享同一真源——务必传 `clone`，
+    ///    否则导入后菜单/快捷键与状态机会写到不同历史栈）。
+    ///
+    /// 调用时机（§3.3）：native 在 File 菜单 Load 点击处同帧调用；wasm 经 [`crate::io::take_loaded_bytes`]
+    /// 在 `ui` 顶部、画布 CentralPanel 渲染**之前**调用——替换发生在本帧几何读取之前，无悬空索引窗口。
+    fn replace_document(&mut self, bytes: &[u8]) {
+        // 兼容旧 .cnt：persistence::load 会回退解析无版本号的旧格式。
+        match crate::persistence::load(bytes) {
+            Ok(doc) => {
+                let (graph, canvas) = doc.into_parts();
+                // 整图被替换：作废任何在途暂存快照（同 New）。
+                self.history.discard_staged();
+                // 作为一个可撤销单元：先把"载入前"的图压入 undo（在替换资源 Arc 之前、写闭包外
+                // 克隆，§3.1）。撤销会让旧图整体复活（视图/缩放与 id 计数器不回滚，符合 spec）。
+                let before = self.graph_resource.read_resource(|g| g.clone());
+                self.history.record(before);
+                self.graph_resource = GraphResource::new(graph);
+                self.canvas_resource = CanvasStateResource::new(canvas);
+                // 复用同一个 history 句柄（§3.1：共享同一真源）——务必传 clone，否则替换后
+                // 菜单/快捷键与状态机会写到不同历史栈。
+                self.canvas_widget = CanvasWidget::new(
+                    self.graph_resource.clone(),
+                    self.canvas_resource.clone(),
+                    self.history.clone(),
+                );
+                log::info!("document replaced ({} bytes)", bytes.len());
+            }
+            Err(e) => log::error!("load failed: {e}"),
+        }
+    }
+
     /// 选中并把画布聚焦（居中）到某节点。
     fn focus_node(&self, ctx: &egui::Context, idx: petgraph::graph::NodeIndex) {
         let pos = self.graph_resource.with_resource(|g| {
@@ -1160,6 +1197,14 @@ impl eframe::App for CognitheonApp {
         // 每帧更新 offset
         let new_offset = last_offset - speed * delta_time;
         ctx.data_mut(|m| m.insert_temp(Id::new("animation_offset"), new_offset));
+
+        // 导入（Load）异步读出的文件字节：每帧在所有面板（尤其画布 CentralPanel）渲染**之前**
+        // 一次性消费（io 总线，native 同帧 / wasm FileReader 跨帧写入；take 取出即清，一份字节只
+        // 加载一次）。在画布渲染前替换整图 → 本帧几何按新图重写，无悬空索引窗口（§3.3，与
+        // replace_document 文档一致）。
+        if let Some(bytes) = crate::io::take_loaded_bytes(&ctx) {
+            self.replace_document(&bytes);
+        }
         // println!(
         //     "update: {:?}",
         //     self.graph_resource.0.read().unwrap().graph.node_count()
@@ -1300,97 +1345,67 @@ impl eframe::App for CognitheonApp {
             // The top panel is often a good place for a menu bar:
 
             egui::MenuBar::new().ui(ui, |ui| {
-                // NOTE: 文件 Save/Load 走 tokio + rfd，仅 native；web 上不显示 File 菜单。
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    ui.menu_button("File", |ui| {
-                        if ui.button("New").clicked() {
-                            log::info!("new");
-                            // 整图被 New 替换：作废任何在途的暂存快照（如正编辑/拖拽中点 New），
-                            // 它对新图无意义，留着会在退出编辑那帧产生多余撤销项。
-                            self.history.discard_staged();
-                            // New = 清空整图，作为一个可撤销单元（撤销后旧图整体复活）。
-                            // history.mutate 在写闭包外先克隆 before 压栈（§3.1），再 reset。
-                            self.history
-                                .mutate(&self.graph_resource, |graph| graph.reset());
-                        }
+                // File 菜单：Save/Load **双 target 都显示**。内部按 cfg 分派——native 走
+                // rfd + tokio（io::download / io::request_open_file 内部门控），wasm 走 web-sys
+                // 浏览器下载 / FileReader（同上）。统一 IO 网关见 crate::io，避免两套逻辑漂移。
+                ui.menu_button("File", |ui| {
+                    if ui.button("New").clicked() {
+                        log::info!("new");
+                        // 整图被 New 替换：作废任何在途的暂存快照（如正编辑/拖拽中点 New），
+                        // 它对新图无意义，留着会在退出编辑那帧产生多余撤销项。
+                        self.history.discard_staged();
+                        // New = 清空整图，作为一个可撤销单元（撤销后旧图整体复活）。
+                        // history.mutate 在写闭包外先克隆 before 压栈（§3.1），再 reset。
+                        self.history
+                            .mutate(&self.graph_resource, |graph| graph.reset());
+                    }
 
-                        if ui.button("Save").clicked() {
-                            ui.close();
-                            // 读出图 + 画布，序列化为带 schema 版本号的开放 JSON 文档
-                            match self.graph_resource.read_resource(|graph| {
-                                self.canvas_resource.read_resource(|canvas| {
-                                    crate::persistence::save_string(graph, Some(canvas))
-                                })
-                            }) {
-                                Ok(data) => {
-                                    let future = async move {
-                                        if let Some(file) = AsyncFileDialog::new()
-                                            .add_filter("Cognitheon", &["cnt"])
-                                            .set_directory("~")
-                                            .save_file()
-                                            .await
-                                        {
-                                            match file.write(data.as_bytes()).await {
-                                                Ok(_) => log::info!("save success"),
-                                                Err(e) => log::error!("save failed: {e}"),
-                                            }
-                                        }
-                                    };
-                                    self.runtime.block_on(future);
-                                }
-                                Err(e) => log::error!("serialize failed: {e}"),
-                            }
+                    if ui.button("Save").clicked() {
+                        ui.close();
+                        // 读出图 + 画布，序列化为带 schema 版本号的开放 JSON 文档。
+                        match self.graph_resource.read_resource(|graph| {
+                            self.canvas_resource.read_resource(|canvas| {
+                                crate::persistence::save_string(graph, Some(canvas))
+                            })
+                        }) {
+                            // native：trigger_download 需 tokio runtime 句柄落盘；
+                            // wasm：trigger_download 同步触发浏览器下载（无 runtime 参数）。
+                            #[cfg(not(target_arch = "wasm32"))]
+                            Ok(data) => crate::io::download::trigger_download(
+                                &self.runtime,
+                                "cognitheon.cnt",
+                                data.as_bytes(),
+                                "application/json",
+                            ),
+                            #[cfg(target_arch = "wasm32")]
+                            Ok(data) => crate::io::download::trigger_download(
+                                "cognitheon.cnt",
+                                data.as_bytes(),
+                                "application/json",
+                            ),
+                            Err(e) => log::error!("serialize failed: {e}"),
                         }
+                    }
 
-                        if ui.button("Load").clicked() {
-                            ui.close();
-                            let future = async {
-                                match AsyncFileDialog::new()
-                                    .add_filter("Cognitheon", &["cnt"])
-                                    .set_directory("~")
-                                    .pick_file()
-                                    .await
-                                {
-                                    Some(file) => Some(file.read().await),
-                                    None => None,
-                                }
-                            };
-                            if let Some(data) = self.runtime.block_on(future) {
-                                // 兼容旧 .cnt：persistence::load 会回退解析无版本号的旧格式
-                                match crate::persistence::load(&data) {
-                                    Ok(doc) => {
-                                        let (graph, canvas) = doc.into_parts();
-                                        // 整图被 Load 替换：作废任何在途暂存快照（同 New）。
-                                        self.history.discard_staged();
-                                        // Load = 替换整图，作为一个可撤销单元：先把"载入前"的图压入
-                                        // undo（在替换资源 Arc 之前、写闭包外克隆，§3.1）。撤销 Load
-                                        // 会让旧图整体复活（视图/缩放与 id 计数器不回滚，符合 spec）。
-                                        let before =
-                                            self.graph_resource.read_resource(|g| g.clone());
-                                        self.history.record(before);
-                                        self.graph_resource = GraphResource::new(graph);
-                                        self.canvas_resource = CanvasStateResource::new(canvas);
-                                        // 复用同一个 history 句柄（§3.1：共享同一真源）——务必传 clone，
-                                        // 否则 Load 后菜单/快捷键与状态机会写到不同历史栈。
-                                        self.canvas_widget = CanvasWidget::new(
-                                            self.graph_resource.clone(),
-                                            self.canvas_resource.clone(),
-                                            self.history.clone(),
-                                        );
-                                    }
-                                    Err(e) => log::error!("load failed: {e}"),
-                                }
-                            }
-                        }
+                    if ui.button("Load").clicked() {
+                        ui.close();
+                        // 导入天生异步：弹选择器、读字节后写入 io 总线，下一帧由 take_loaded_bytes
+                        // 消费 → replace_document（native 同帧 block_on 读出后写总线；wasm 经 FileReader
+                        // 异步回调跨帧写总线）。native 需 runtime 句柄，wasm 无。
+                        #[cfg(not(target_arch = "wasm32"))]
+                        crate::io::request_open_file(&ctx, &self.runtime);
+                        #[cfg(target_arch = "wasm32")]
+                        crate::io::request_open_file(&ctx);
+                    }
 
-                        if ui.button("Quit").clicked() {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                    });
+                    // Quit 仅 native 有意义（关闭桌面窗口）；wasm 是浏览器标签页，无此动作。
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if ui.button("Quit").clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
 
-                    ui.add_space(16.0);
-                }
+                ui.add_space(16.0);
 
                 // Edit 菜单：撤销 / 重做（双 target 都可用）。按 can_undo/can_redo 灰显，
                 // 走与快捷键同一入口（self.history），保证两条路径语义一致。
