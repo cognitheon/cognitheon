@@ -234,6 +234,12 @@ pub struct InputStateManager {
     /// 上一帧的 `editing_node`，用于检测"退出编辑"的边沿（`Some(x) -> 非 x`）。
     /// 退出编辑是 wikilink `resolve_links` 的统一触发时机（§3.4：输入逻辑只在本文件驱动）。
     prev_editing_node: Option<NodeIndex>,
+
+    /// 进入编辑那一刻被编辑节点的**旧标题快照**（与 `prev_editing_node` 同步采集、同步收口）。
+    /// 退出编辑时与当前标题比较：变了则在 resolve 前把全图 `[[旧标题]]` 传播为 `[[新标题]]`
+    /// （节点重命名传播，反链不丢）。在**所有退出编辑路径**都成立——因为它和 `prev_editing_node`
+    /// 一样在每帧 `resolve_on_exit_edit` 末尾刷新，进入编辑那帧即记下旧标题（§3.4 收口于本文件）。
+    prev_editing_title: Option<String>,
 }
 
 impl InputStateManager {
@@ -247,6 +253,7 @@ impl InputStateManager {
             context: InputContext::new(graph_resource, canvas_state_resource, history),
             last_target: None,
             prev_editing_node: None,
+            prev_editing_title: None,
         }
     }
 
@@ -321,11 +328,19 @@ impl InputStateManager {
         self.resolve_on_exit_edit();
     }
 
-    /// 检测 `editing_node` 的退出边沿并对刚退出的节点触发 wikilink 投影。
+    /// 检测 `editing_node` 的退出边沿并对刚退出的节点触发**重命名传播 + wikilink 投影**。
     ///
     /// `prev` 与当前帧的 `editing_node` 比较：若 `prev = Some(x)` 且当前不再是 `x`
-    /// （变成 `None` 或换到了别的节点），说明 `x` 退出了编辑——此时把 `x` 正文里的
-    /// `[[标题]]` 幂等投影到图上（先清旧 wiki 边再按当前正文重建）。
+    /// （变成 `None` 或换到了别的节点），说明 `x` 退出了编辑——此时按序：
+    /// 1. **重命名传播**：把进入编辑时的旧标题快照与当前标题比较；若变了（且新旧均非空），先
+    ///    [`crate::wikilink::rename_node_propagate`] 把全图正文里精确 `[[旧标题]]` 的 token 改写为
+    ///    `[[新标题]]`（反链不丢），并 `log::info!` 报「已更新 N 处引用」（native = env_logger /
+    ///    wasm = WebLogger，CLAUDE.md 双端可见反馈）。
+    /// 2. **wiki 投影**：再对 `x` 正文 [`crate::wikilink::resolve_links`]（幂等差量同步 wiki 边）。
+    ///
+    /// 这两步与"编辑期文本改动"合并为**一个撤销单元**——退出编辑前 `stage_edit_snapshot` 已暂存
+    /// 进入编辑前的整图，这里只在退出那一帧 `commit_staged_if_changed` 收尾，故 Ctrl+Z **一次**
+    /// 同时回退「改名 + 传播 + resolve + 编辑期改动」（§3.1：所有 clone 在写闭包之外单独 read）。
     fn resolve_on_exit_edit(&mut self) {
         let current = self
             .context
@@ -334,6 +349,34 @@ impl InputStateManager {
 
         if let Some(exited) = self.prev_editing_node {
             if current != Some(exited) {
+                // 退出那一刻被编辑节点的当前标题（写闭包外单独 read，§3.1）。节点可能已被删 → None。
+                let new_title = self
+                    .context
+                    .graph_resource
+                    .read_resource(|g| g.get_node(exited).map(|n| n.text.clone()));
+
+                // 1. 重命名传播：旧标题快照 vs 新标题，变了且两端非空才传播（空标题不寻址、跳过）。
+                if let (Some(old_title), Some(new_title)) =
+                    (self.prev_editing_title.as_ref(), new_title.as_ref())
+                {
+                    if old_title != new_title && !old_title.is_empty() && !new_title.is_empty() {
+                        let updated = self.context.graph_resource.with_resource(|graph| {
+                            crate::wikilink::rename_node_propagate(graph, old_title, new_title)
+                        });
+                        if updated > 0 {
+                            // 「已更新 N 处引用」可见反馈（spec：log::info 至少有可见反馈）。
+                            log::info!(
+                                "节点重命名 \"{old_title}\" → \"{new_title}\"：已更新 {updated} 处引用"
+                            );
+                        } else {
+                            log::debug!(
+                                "节点重命名 \"{old_title}\" → \"{new_title}\"：无正文引用需更新"
+                            );
+                        }
+                    }
+                }
+
+                // 2. wiki 投影：按退出后的正文幂等同步 wiki 边（先清旧 wiki 边再按当前正文重建）。
                 self.context.graph_resource.with_resource(|graph| {
                     crate::wikilink::resolve_links(
                         graph,
@@ -343,14 +386,21 @@ impl InputStateManager {
                 });
 
                 // 退出编辑 = 一个撤销单元的收尾：把进入编辑时暂存的快照按"图数据是否真变了"
-                // 提交（编辑期文本改动 + 本次 resolve 一起算一步）或丢弃（双击进编辑没改就退出）。
-                // current 在写闭包外单独 read 克隆（§3.1：绝不在写闭包内重入读同资源）。
+                // 提交（编辑期文本改动 + 改名传播 + 本次 resolve 一起算一步）或丢弃（双击进编辑
+                // 没改就退出）。after 在写闭包外单独 read 克隆（§3.1：绝不在写闭包内重入读同资源）。
                 let after = self.context.graph_resource.read_resource(|g| g.clone());
                 self.context.history.commit_staged_if_changed(&after);
             }
         }
 
+        // 同步刷新退出边沿快照：记下当前帧的编辑节点与其标题，作为下一次退出比较的旧标题基准。
+        // 进入编辑那一帧在此记下旧标题，覆盖所有退出路径（§3.4 收口）。
         self.prev_editing_node = current;
+        self.prev_editing_title = current.and_then(|idx| {
+            self.context
+                .graph_resource
+                .read_resource(|g| g.get_node(idx).map(|n| n.text.clone()))
+        });
     }
 
     /// 处理可能触发状态转换的一次性事件

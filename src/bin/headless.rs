@@ -9,6 +9,7 @@
 //! 命令一览（`help` 可在运行时打印）：
 //!   new <x> <y> [title...]      新建节点，返回 `node <index> <id>`
 //!   title <index> <title...>    设标题（Node.text）
+//!   rename <index> <new...>     改标题并传播：把全图正文里精确 [[旧标题]] 改写为 [[新标题]]
 //!   body <index> <body...>      设正文（Node.note），支持 `\n`
 //!   alias <index> <names...>    设别名（Node.aliases），逗号分隔、trim、去空
 //!   get <index>                 打印该节点 id/pos/title/body/aliases
@@ -92,7 +93,7 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
         "quit" | "exit" => Ok(None),
         "help" => Ok(Some(
             [
-                "commands: new <x> <y> [title] | title <i> <t> | body <i> <b> | alias <i> <names> | get <i>",
+                "commands: new <x> <y> [title] | title <i> <t> | rename <i> <new> | body <i> <b> | alias <i> <names> | get <i>",
                 "          rm <i> | count | dump | save <path> | load <path> | reset | quit",
                 "          link <i> <j> | parse <i> | backlinks <i> | search <q> | tags <i> | tagged <name> | find <title> | find-all <title> | orphans",
                 "          export-md [<i>] | import-md-add <name> <body> | import-md-run",
@@ -125,6 +126,32 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
             let node = s.graph.get_node_mut(idx).ok_or("no such node")?;
             node.text = title;
             Ok(Some(vec!["ok".into()]))
+        }
+
+        // rename <index> <new...>：改标题并传播——复刻 state_manager 退出编辑的收口顺序。
+        // 注意：state_manager 里标题 TextEdit 编辑期 node.text 已写成新名，退出时 node.text
+        // 已是新名，真实顺序是"标题已新 → 传播 → resolve"；
+        // 但 rename_node_propagate 只读改 Node.note、从不读 node.text，
+        // 故此处先传播再落新标题，最终态与 state_manager 一致。
+        // 用例覆盖：只换 token 内不误伤普通文本、[[old_x]] 不动、中文标题。
+        "rename" => {
+            let mut it = rest.splitn(2, ' ');
+            let idx = parse_index(it.next().unwrap_or(""))?;
+            let new_title = unescape(it.next().unwrap_or(""));
+            let old_title = s.graph.get_node(idx).ok_or("no such node")?.text.clone();
+            // 新旧均非空且不同才传播（与状态机触发条件一致；空标题不寻址）。
+            let updated = if old_title != new_title
+                && !old_title.is_empty()
+                && !new_title.is_empty()
+            {
+                wikilink::rename_node_propagate(&mut s.graph, &old_title, &new_title)
+            } else {
+                0
+            };
+            // 落新标题，再对该节点 resolve（与退出编辑同序）。
+            s.graph.get_node_mut(idx).unwrap().text = new_title;
+            wikilink::resolve_links(&mut s.graph, &s.canvas, idx);
+            Ok(Some(vec![format!("ok updated {updated}")]))
         }
 
         "body" => {

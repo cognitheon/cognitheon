@@ -38,6 +38,99 @@ pub fn parse_links(text: &str) -> Vec<String> {
     out
 }
 
+/// 把 `text` 里**精确引用 `old` 的 `[[..]]` token** 改写成 `[[new]]`，返回本文本里替换了几处。
+///
+/// **token-only，绝不裸 `text.replace("[[old]]", ...)`**：裸 replace 会误伤含同名子串的正文
+/// （如普通文本里的 "old"）、或把 `[[old_suffix]]` 这类**非精确**引用一起换掉。本函数严格按
+/// [`parse_links`] **同款扫描方式**定位每个 `[[..]]` 区间——找到 `[[` 再找其后首个 `]]`，只有当
+/// **区间内文本 `trim()` 后恰好 == `old`** 时才把整段 `[[..]]` token 重写为规范的 `[[new]]`
+/// （顺带把 `[[ old ]]` 这类带空白的写法收敛为 `[[new]]`）；其余字节**原样复制**，§7 保真。
+///
+/// 严格遵守 [`parse_links`] 的扫描语义（保证"哪些是 token"两边一致）：
+/// - **未闭合**（有 `[[` 没有后续 `]]`）：与 `parse_links` 一样停止扫描，剩余文本原样保留、不动。
+/// - **嵌套残留**（如 `[[a[[b]]`）：区间内文本含 `[[`，`trim()` 后不可能等于不含 `[[` 的 `old`
+///   （`old` 由标题来、标题不含 `[[`），故天然不匹配、不替换——与 `parse_links` 跳过此类一致。
+/// - 同一文本多处、跨行均逐个处理；普通文本里的 `old` 子串（不在 `[[..]]` 内）绝不触碰。
+///
+/// 以 `&str::find` 在 UTF-8 上定位 `[[`/`]]`（均 ASCII、不切多字节中段），对中文标题安全。
+fn replace_link_tokens_in_text(text: &str, old: &str, new: &str) -> (String, usize) {
+    let mut out = String::with_capacity(text.len());
+    let mut count = 0usize;
+    let mut rest = text;
+    loop {
+        match rest.find("[[") {
+            Some(start) => {
+                let after = &rest[start + 2..];
+                match after.find("]]") {
+                    Some(end) => {
+                        let inner = &after[..end];
+                        // start..(start+2+end+2) 是完整的 `[[inner]]` token 区间。
+                        if inner.trim() == old {
+                            // 精确命中：先把 token 之前的原文照搬，再写规范 `[[new]]`。
+                            out.push_str(&rest[..start]);
+                            out.push_str("[[");
+                            out.push_str(new);
+                            out.push_str("]]");
+                            count += 1;
+                        } else {
+                            // 非精确（含 `[[old_x]]` / 嵌套残留等）：原样照搬整段 `[[inner]]`。
+                            out.push_str(&rest[..start + 2 + end + 2]);
+                        }
+                        // 推进到本 token 之后继续扫描（同 parse_links 的 `rest = &after[end+2..]`）。
+                        rest = &after[end + 2..];
+                    }
+                    // 有 `[[` 但无闭合 `]]`：同 parse_links 停止扫描，剩余原样保留。
+                    None => {
+                        out.push_str(rest);
+                        break;
+                    }
+                }
+            }
+            // 再无 `[[`：剩余原样保留。
+            None => {
+                out.push_str(rest);
+                break;
+            }
+        }
+    }
+    (out, count)
+}
+
+/// 节点重命名传播：把图中**所有节点正文**里精确引用 `[[old]]` 的 wikilink token 改写为 `[[new]]`，
+/// 返回总替换处数。**这是"用户显式重命名"驱动的合法批量写入**，不违 SSOT「投影不反写」——
+/// SSOT 禁的是**自动 wiki 边**反写 note（机器投影不得回灌原文）；而改名是**用户意图**驱动的编辑，
+/// 性质与用户在编辑框里手敲改字相同，理应让所有引用方反链不丢（PKM 最让人措手不及的数据损失点）。
+///
+/// 范围与边界（v1）：
+/// - **token-only**：逐节点经 [`replace_link_tokens_in_text`] 只动 `[[..]]` 内 `trim()` 后精确 ==
+///   `old` 的引用；普通正文含 `old`、`[[old_x]]`/`[[x_old]]`、未闭合 `[[` 一律不动（§7 其余字节保真）。
+/// - **别名不动**（#10 范围）：只传播字面 `[[old text]]→[[new text]]`。若某引用写的是 `[[别名]]` 指向
+///   被改名节点，本函数**不**改它——它仍经 [`find_by_title`] 的别名寻址命中该节点、不断链；只是其
+///   字面文本保持 `[[别名]]`。这是刻意的最小化范围（改别名是另一回事）。
+/// - **被改名节点自身正文**也参与遍历：若它正文里写了 `[[old]]`（自指旧名），同样被改写为 `[[new]]`，
+///   语义自洽（退出编辑后自指会被 resolve 视作自环跳过，但文本应与新标题一致）。
+/// - `old == new`、`old` 为空时调用方应已短路（见 state_manager 触发处）；此处即便传入也只是按
+///   token 精确匹配（空 `old` 不会等于任何非空 `inner.trim()` 的常见情形，行为良性）。
+///
+/// 经 `node_weights_mut` 原地改 `Node.note`（§3.3 用拓扑句柄、不持 `&Node` 跨帧；调用方在
+/// `with_resource` 写闭包内调用，clone 已在闭包外，无锁重入，§3.1）。
+pub fn rename_node_propagate(graph: &mut Graph, old: &str, new: &str) -> usize {
+    // 纵深防御：空 old 会匹配空/纯空白 token、含 [[ 的 old 与 parse_links 的 token 判据分歧——
+    // 二者都是病态输入（正常调用方已短路），直接返回 0 不改任何 note，与 parse_links 对齐。
+    if old.is_empty() || old.contains("[[") {
+        return 0;
+    }
+    let mut total = 0usize;
+    for node in graph.graph.node_weights_mut() {
+        let (replaced, n) = replace_link_tokens_in_text(&node.note, old, new);
+        if n > 0 {
+            node.note = replaced;
+            total += n;
+        }
+    }
+    total
+}
+
 /// 判定字符是否能构成标签（`#tag`）正文：字母 / 数字 / CJK / `_` / `-` / `/`（层级分隔）。
 ///
 /// 与 markdown 标题 `# ` 的判据**天然互斥**：标题要求 `#` 后紧跟空格（见 `md_highlight::heading_level`），
@@ -1526,5 +1619,187 @@ mod tests {
         let bbox = minimap_bbox(&g).unwrap();
         assert_eq!(bbox.min, egui::pos2(-10.0, -25.0));
         assert_eq!(bbox.max, egui::pos2(30.0, 40.0));
+    }
+
+    // ===== 节点重命名传播 rename_node_propagate（token-only 替换算法，先纯函数钉死）=====
+
+    /// 直接断言纯文本替换算法（不经图）：返回 (新文本, 替换处数)。
+    fn rep(text: &str, old: &str, new: &str) -> (String, usize) {
+        super::replace_link_tokens_in_text(text, old, new)
+    }
+
+    #[test]
+    fn rename_token_exact_match_replaced() {
+        // 精确 [[old]] → [[new]]，普通正文不动。
+        assert_eq!(
+            rep("见 [[B]] 这里", "B", "B2"),
+            ("见 [[B2]] 这里".into(), 1)
+        );
+        // 只有 token，无其它文本。
+        assert_eq!(rep("[[B]]", "B", "B2"), ("[[B2]]".into(), 1));
+    }
+
+    #[test]
+    fn rename_token_prefix_suffix_not_replaced() {
+        // [[old_x]] / [[x_old]]：非精确匹配，整段原样保留、计数 0。
+        assert_eq!(rep("[[B_x]]", "B", "B2"), ("[[B_x]]".into(), 0));
+        assert_eq!(rep("[[x_B]]", "B", "B2"), ("[[x_B]]".into(), 0));
+        // 同一文本混合：[[B]] 换、[[B_x]] 不换。
+        assert_eq!(
+            rep("[[B]] 与 [[B_x]]", "B", "B2"),
+            ("[[B2]] 与 [[B_x]]".into(), 1)
+        );
+    }
+
+    #[test]
+    fn rename_plain_text_substring_not_touched() {
+        // 普通文本里的 "B" 子串（不在 [[..]] 内）绝不触碰；同句里的 [[B]] 才换。
+        assert_eq!(
+            rep("Banana 与 a[[B]]b 还有 BBB", "B", "B2"),
+            ("Banana 与 a[[B2]]b 还有 BBB".into(), 1)
+        );
+        // 完全没有 token：原样、计数 0。
+        assert_eq!(
+            rep("纯文本含 B 字样但无双链", "B", "B2"),
+            ("纯文本含 B 字样但无双链".into(), 0)
+        );
+    }
+
+    #[test]
+    fn rename_token_with_inner_whitespace_normalized() {
+        // [[ old ]] 带空格：trim 后相等要换，并收敛为规范 [[new]]（去掉内侧空白）。
+        assert_eq!(rep("x [[ B ]] y", "B", "B2"), ("x [[B2]] y".into(), 1));
+        assert_eq!(rep("[[\tB\t]]", "B", "B2"), ("[[B2]]".into(), 1));
+    }
+
+    #[test]
+    fn rename_multiple_and_multiline() {
+        // 同一文本多处 + 跨行：每个精确 [[B]] 都换。
+        let text = "第一行 [[B]]\n第二行也有 [[B]] 和 [[C]]\n第三 [[ B ]]";
+        let (out, n) = rep(text, "B", "B2");
+        assert_eq!(n, 3, "三处 [[B]]（含带空格）都应替换");
+        assert_eq!(
+            out,
+            "第一行 [[B2]]\n第二行也有 [[B2]] 和 [[C]]\n第三 [[B2]]"
+        );
+    }
+
+    #[test]
+    fn rename_chinese_title() {
+        // 中文标题 [[旧]]→[[新]]，正文中文子串"旧"不动。
+        assert_eq!(
+            rep("关于 [[旧]] 的旧笔记", "旧", "新"),
+            ("关于 [[新]] 的旧笔记".into(), 1)
+        );
+        // 中文前后缀非精确不动。
+        assert_eq!(rep("[[旧版]]", "旧", "新"), ("[[旧版]]".into(), 0));
+    }
+
+    #[test]
+    fn rename_malformed_unclosed_left_untouched() {
+        // 畸形 [[ 不闭合：与 parse_links 一样停止扫描，剩余原样保留、计数 0。
+        assert_eq!(rep("前 [[B 未闭合", "B", "B2"), ("前 [[B 未闭合".into(), 0));
+        // 闭合的 [[B]] 在前、未闭合在后：前者换、后者原样。
+        assert_eq!(
+            rep("[[B]] 然后 [[B 未闭合", "B", "B2"),
+            ("[[B2]] 然后 [[B 未闭合".into(), 1)
+        );
+    }
+
+    #[test]
+    fn rename_nested_residue_not_matched() {
+        // 嵌套残留 [[a[[B]]：parse_links 视作未闭合/含 [[ 的非法 token。
+        // 扫描首个 `]]` 落在内层，inner = "a[[B"，trim 后含 [[，不等于 "B" 或 "a"，整段原样、计数 0。
+        let (out, n) = rep("[[a[[B]]", "B", "B2");
+        assert_eq!(n, 0, "嵌套残留不应被当作精确引用替换");
+        assert_eq!(out, "[[a[[B]]", "原文应原样保留");
+    }
+
+    #[test]
+    fn rename_new_with_special_chars() {
+        // new 含特殊字符（标点、空格）：作为字面量原样写入 [[..]]，不做任何转义/解析。
+        assert_eq!(rep("[[B]]", "B", "New (v2)"), ("[[New (v2)]]".into(), 1));
+        // new 含中文与符号。
+        assert_eq!(
+            rep("见 [[B]]", "B", "新-标题/子"),
+            ("见 [[新-标题/子]]".into(), 1)
+        );
+    }
+
+    #[test]
+    fn rename_propagate_across_graph_counts_total() {
+        // 图级传播：多节点正文引用 [[B]]，改名 B→B2，总计 N 处；反链经新名仍命中。
+        let (mut g, _c) = graph_with(&["A", "B", "D"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let d = find_by_title(&g, "D").unwrap();
+        g.get_node_mut(a).unwrap().note = "引用 [[B]] 两次 [[B]]".to_owned();
+        g.get_node_mut(d).unwrap().note = "也引用 [[B]] 与 [[B_x]]".to_owned();
+
+        let n = rename_node_propagate(&mut g, "B", "B2");
+        assert_eq!(n, 3, "A 两处 + D 一处 = 3 处");
+        assert_eq!(g.get_node(a).unwrap().note, "引用 [[B2]] 两次 [[B2]]");
+        // D 的 [[B_x]] 不动。
+        assert_eq!(g.get_node(d).unwrap().note, "也引用 [[B2]] 与 [[B_x]]");
+    }
+
+    #[test]
+    fn rename_propagate_self_reference_in_renamed_node() {
+        // 被改名节点自身正文引用自己旧名 [[old]]：也被改写为 [[new]]（文本与新标题一致）。
+        let (mut g, _c) = graph_with(&["B"]);
+        let b = find_by_title(&g, "B").unwrap();
+        g.get_node_mut(b).unwrap().note = "我自指 [[B]]".to_owned();
+        let n = rename_node_propagate(&mut g, "B", "B2");
+        assert_eq!(n, 1);
+        assert_eq!(g.get_node(b).unwrap().note, "我自指 [[B2]]");
+    }
+
+    #[test]
+    fn rename_propagate_backlinks_survive_via_new_title() {
+        // 端到端：A 引用 [[B]]，把 B 的标题改成 B2 并传播 → A 正文变 [[B2]]，
+        // 以 B 的新标题做反链匹配仍命中 A（反链不丢）。
+        let (mut g, _c) = graph_with(&["A", "B"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        g.get_node_mut(a).unwrap().note = "见 [[B]]，很重要".to_owned();
+
+        // 模拟"改标题 + 传播"：先传播旧→新 token，再落新标题（与 state_manager 触发顺序一致）。
+        let n = rename_node_propagate(&mut g, "B", "B2");
+        g.get_node_mut(b).unwrap().text = "B2".to_owned();
+        assert_eq!(n, 1);
+
+        // 以新标题 B2 的反链应命中 A（旧标题 B 已不再出现在 A 正文里）。
+        let bls = backlinks_with_context(&g, b);
+        assert_eq!(bls.len(), 1, "改名后反链经新标题仍命中");
+        assert_eq!(bls[0].source, a);
+        assert!(bls[0].contexts[0].contains("[[B2]]"));
+    }
+
+    // ===== 纵深防御守卫：病态入口输入（old="" / old 含 [[）→ 返回 0、不改任何 note =====
+
+    #[test]
+    fn rename_propagate_guard_empty_old_returns_zero_no_change() {
+        // old="" 是病态输入：守卫直接返回 0，所有正文原样不动。
+        let (mut g, _c) = graph_with(&["A"]);
+        let a = find_by_title(&g, "A").unwrap();
+        g.get_node_mut(a).unwrap().note = "正文含 [[]] 与 [[A]]".to_owned();
+        let original_note = g.get_node(a).unwrap().note.clone();
+
+        let n = rename_node_propagate(&mut g, "", "任何");
+        assert_eq!(n, 0, "old=\"\" 守卫应返回 0");
+        assert_eq!(g.get_node(a).unwrap().note, original_note, "正文不应被修改");
+    }
+
+    #[test]
+    fn rename_propagate_guard_old_contains_bracket_returns_zero_no_change() {
+        // old 含 "[["：与 parse_links token 判据分歧，守卫直接返回 0，正文原样不动。
+        // 即便正文里确实存在字面文本 [[a[[b]]，也不触碰（病态 old 不应驱动任何替换）。
+        let (mut g, _c) = graph_with(&["A"]);
+        let a = find_by_title(&g, "A").unwrap();
+        g.get_node_mut(a).unwrap().note = "正文含 [[a[[b]]".to_owned();
+        let original_note = g.get_node(a).unwrap().note.clone();
+
+        let n = rename_node_propagate(&mut g, "a[[b", "X");
+        assert_eq!(n, 0, "old 含 [[，守卫应返回 0");
+        assert_eq!(g.get_node(a).unwrap().note, original_note, "正文不应被修改");
     }
 }
