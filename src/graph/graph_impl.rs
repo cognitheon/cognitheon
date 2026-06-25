@@ -111,6 +111,55 @@ impl Graph {
         // self.selected_nodes.clear();
         self.editing_node = None;
     }
+
+    /// 把当前选区（节点或边）整体从图里删除，返回实际删除的元素数。
+    ///
+    /// 纯图层、无副作用之外只动 `self.graph` / `self.selected` / `self.editing_node`，
+    /// 可无头单测（仿 wikilink / layout 的 `#[cfg(test)]` 风格）。UI（Edit 菜单 / 右键删除）
+    /// 只需把它包进 `History::mutate` 即可成为一个可撤销单元。
+    ///
+    /// 语义（AGENTS.md §3.3）：
+    /// - 节点选区：逐个 `remove_node`——`StableGraph::remove_node` 会**连带删除**该节点的所有
+    ///   邻接边，故无需手动清边；删除后 `EdgeIndex` 对其余边保持稳定。
+    /// - 边选区：逐个 `remove_edge`，只删边、不动端点节点。
+    /// - 删除后**必须清空 `selected`**：选区里残留的索引已悬空，留着会被后续渲染/命中以
+    ///   `.unwrap()` 读取而 panic（§3.3）。`editing_node` 由 `remove_node` 顺带清空，这里再兜底清一次。
+    pub fn remove_selected(&mut self) -> usize {
+        let removed = match std::mem::take(&mut self.selected) {
+            GraphSelection::Node(nodes) => {
+                let mut n = 0;
+                for node_index in nodes {
+                    // 容错：选区里可能有已被其它操作删掉的悬空索引——remove_node 对不存在的
+                    // 索引返回 None、不 panic（§3.3）。只对真正删掉的计数。
+                    if self.graph.remove_node(node_index).is_some() {
+                        n += 1;
+                    }
+                }
+                n
+            }
+            GraphSelection::Edge(edges) => {
+                let mut n = 0;
+                for edge_index in edges {
+                    if self.graph.remove_edge(edge_index).is_some() {
+                        n += 1;
+                    }
+                }
+                n
+            }
+            GraphSelection::None => 0,
+        };
+        // 选区已被 take 置为 None（清空），这里再显式收口 editing（删点路径已清，删边路径未触及）。
+        self.editing_node = None;
+        removed
+    }
+
+    /// 全选所有节点（替换当前选区为"全部节点"的节点选区）。纯图层，可无头单测。
+    ///
+    /// 右键空白菜单「全选」复用它。空图时选区被置为空的节点选区（语义等价于无选中）。
+    pub fn select_all_nodes(&mut self) {
+        let all: Vec<NodeIndex> = self.graph.node_indices().collect();
+        self.selected = GraphSelection::Node(all);
+    }
 }
 
 impl Graph {
@@ -221,5 +270,120 @@ pub fn render_graph(
         );
         node_widget.add_observer(Arc::new(NodeRenderObserver::new(ui.ctx().clone())));
         ui.add(node_widget);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graph::node::Node;
+    use crate::resource::CanvasStateResource;
+
+    fn node(text: &str) -> Node {
+        Node {
+            id: 0,
+            position: egui::pos2(0.0, 0.0),
+            text: text.to_owned(),
+            note: String::new(),
+        }
+    }
+
+    fn edge(g: &Graph, src: NodeIndex, dst: NodeIndex) -> Edge {
+        let sp = g.get_node(src).map(|n| n.position).unwrap_or_default();
+        let dp = g.get_node(dst).map(|n| n.position).unwrap_or_default();
+        Edge::new(src, dst, sp, dp, CanvasStateResource::default())
+    }
+
+    /// 删除节点选区：连同邻接边一并删除，选区清空，返回删除节点数。
+    #[test]
+    fn remove_selected_nodes_drops_adjacent_edges_and_clears_selection() {
+        let mut g = Graph::default();
+        let a = g.add_node(node("a"));
+        let b = g.add_node(node("b"));
+        let c = g.add_node(node("c"));
+        let e_ab = edge(&g, a, b);
+        let e_bc = edge(&g, b, c);
+        g.add_edge(e_ab);
+        g.add_edge(e_bc);
+        assert_eq!(g.graph.node_count(), 3);
+        assert_eq!(g.graph.edge_count(), 2);
+
+        // 选中 a 和 b 两个节点。
+        g.selected = GraphSelection::Node(vec![a, b]);
+        let removed = g.remove_selected();
+
+        assert_eq!(removed, 2, "应删除 2 个节点");
+        assert_eq!(g.graph.node_count(), 1, "只剩 c");
+        // a-b 边随 a/b 删除；b-c 边随 b 删除——两条边全没了。
+        assert_eq!(g.graph.edge_count(), 0, "邻接边应随节点一并删除");
+        assert!(g.get_node(c).is_some(), "c 应保留");
+        assert!(
+            matches!(g.selected, GraphSelection::None),
+            "删除后选区必须清空（防悬空索引）"
+        );
+    }
+
+    /// 删除边选区：只删边、保留端点节点，选区清空，返回删除边数。
+    #[test]
+    fn remove_selected_edges_keeps_nodes_and_clears_selection() {
+        let mut g = Graph::default();
+        let a = g.add_node(node("a"));
+        let b = g.add_node(node("b"));
+        let c = g.add_node(node("c"));
+        let e_ab_w = edge(&g, a, b);
+        let e_bc_w = edge(&g, b, c);
+        g.add_edge(e_ab_w);
+        g.add_edge(e_bc_w);
+        let e_ab = g.graph.find_edge(a, b).unwrap();
+        let e_bc = g.graph.find_edge(b, c).unwrap();
+
+        g.selected = GraphSelection::Edge(vec![e_ab, e_bc]);
+        let removed = g.remove_selected();
+
+        assert_eq!(removed, 2, "应删除 2 条边");
+        assert_eq!(g.graph.edge_count(), 0, "两条边都删掉");
+        assert_eq!(g.graph.node_count(), 3, "端点节点不动");
+        assert!(matches!(g.selected, GraphSelection::None));
+    }
+
+    /// 空选区删除：无操作，返回 0，不 panic。
+    #[test]
+    fn remove_selected_none_is_noop() {
+        let mut g = Graph::default();
+        g.add_node(node("a"));
+        assert_eq!(g.remove_selected(), 0);
+        assert_eq!(g.graph.node_count(), 1);
+    }
+
+    /// 选区含悬空索引（已被删的节点）时容错：跳过、只对真正删掉的计数，不 panic（§3.3）。
+    #[test]
+    fn remove_selected_tolerates_stale_indices() {
+        let mut g = Graph::default();
+        let a = g.add_node(node("a"));
+        let b = g.add_node(node("b"));
+        // 先删 b，使 b 成为悬空索引。
+        g.remove_node(b);
+        // 选区里同时含活索引 a 与悬空索引 b。
+        g.selected = GraphSelection::Node(vec![a, b]);
+        let removed = g.remove_selected();
+        assert_eq!(removed, 1, "只有 a 真正被删，悬空索引被跳过");
+        assert_eq!(g.graph.node_count(), 0);
+        assert!(matches!(g.selected, GraphSelection::None));
+    }
+
+    /// 全选：选区变为含全部节点的节点选区。
+    #[test]
+    fn select_all_nodes_selects_every_node() {
+        let mut g = Graph::default();
+        let a = g.add_node(node("a"));
+        let b = g.add_node(node("b"));
+        g.select_all_nodes();
+        match &g.selected {
+            GraphSelection::Node(ns) => {
+                assert_eq!(ns.len(), 2);
+                assert!(ns.contains(&a) && ns.contains(&b));
+            }
+            _ => panic!("全选后应为节点选区"),
+        }
     }
 }

@@ -17,6 +17,13 @@ use petgraph::graph::{EdgeIndex, NodeIndex};
 
 use super::button_state::ButtonState;
 
+/// 右键单击 vs 右键拖拽的位移阈值（屏幕像素）。
+///
+/// 右键 press 后进入 `PendingSecondary`：指针位移**超过**此阈值判为"拖拽"（升级为连边手势），
+/// 否则在 release 时判为"单击"（弹上下文菜单）。屏幕像素阈值与画布缩放无关——它衡量的是用户
+/// 手抖的容差，而非画布距离（§3.2 区分屏幕/画布坐标）。取值参考 egui 默认拖拽起判阈（约 6px）。
+const SECONDARY_DRAG_THRESHOLD: f32 = 6.0;
+
 /// 存储输入处理所需的上下文数据
 #[derive(Debug)]
 pub struct InputContext {
@@ -237,6 +244,11 @@ impl InputStateManager {
         // 首先处理一次性事件，这些可能导致状态转换
         self.handle_one_shot_events(ui, &target, pointer_in_canvas);
 
+        // 消费来自右键菜单的「进入编辑 / 新建并编辑」请求（跨层 temp-data 总线，§3.4 输入唯一驱动）：
+        // 菜单是 app.rs 即时 UI 拿不到 &mut self，只写请求；进编辑/建点的状态转换集中在此处理，
+        // 与双击同款三件套，避免菜单直接 set_editing_node 被 Idle 分支清掉。
+        self.handle_context_menu_requests(ui);
+
         // 然后根据当前状态处理持续性事件
         self.handle_continuous_events(ui, &target);
 
@@ -332,6 +344,80 @@ impl InputStateManager {
             && ui.input(|i| i.pointer.button_double_clicked(PointerButton::Primary))
         {
             self.handle_double_click(ui, target);
+        }
+    }
+
+    /// 消费右键菜单写入的「进入编辑 / 新建并编辑」请求（temp-data 反向总线，§3.4 输入唯一驱动）。
+    ///
+    /// 菜单项（`app.rs` 即时 UI）拿不到 `&mut InputStateManager`，故只把意图写入 `ctx` temp data；
+    /// 真正的状态转换在此一次性消费——与 `handle_double_click` **完全同款**三件套，保证编辑态由状态机
+    /// 持有、不被 `Idle` 分支清掉，且经 `stage_edit_snapshot` 在退出时 `resolve_on_exit_edit` 提交为
+    /// 可撤销单元。读到请求即 `remove`（消费一次）。
+    ///
+    /// 失效容错（§3.3）：`EditNodeRequest` 的目标节点可能在菜单跨帧打开期间被删——`get_node` 为
+    /// `None` 则**丢弃请求、不转换**（绝不 `.unwrap()` / 不 panic）。
+    fn handle_context_menu_requests(&mut self, ui: &mut egui::Ui) {
+        use crate::ui::context_menu::{
+            CreateNodeRequest, EditNodeRequest, CREATE_NODE_REQUEST_KEY, EDIT_NODE_REQUEST_KEY,
+        };
+
+        // 「编辑标题」：让目标节点进入编辑态（与双击节点同语义）。
+        // 用 get_temp + remove 消费（egui 的 remove_temp 要求 T: Default，与 show_context_menu 同款），
+        // 读到即移除（消费一次）。
+        let edit_id = Id::new(EDIT_NODE_REQUEST_KEY);
+        let edit_req: Option<EditNodeRequest> = ui.ctx().data(|d| d.get_temp(edit_id));
+        if let Some(req) = edit_req {
+            ui.ctx().data_mut(|d| d.remove::<EditNodeRequest>(edit_id));
+            let node_index = req.node;
+            // 容错：目标节点是否仍存在（跨帧打开期间可能已被删，§3.3）。失效则丢弃请求不转换。
+            let exists = self
+                .context
+                .graph_resource
+                .read_resource(|g| g.get_node(node_index).is_some());
+            if exists {
+                // 与 handle_double_click(Node) 同款三件套：先 stage（写闭包外 read 克隆，§3.1），
+                // 再 select + set_editing_node，最后 transition_to(EditingNode)。
+                self.stage_edit_snapshot();
+                self.context.graph_resource.with_resource(|graph| {
+                    graph.selected.clear();
+                    graph.select_node(node_index);
+                    graph.set_editing_node(Some(node_index));
+                });
+                self.transition_to(InputState::EditingNode { node_index });
+            }
+        }
+
+        // 「在此新建节点」：在给定画布坐标新建节点并立即进入编辑（与双击空白建点同语义，create+edit
+        // 为单一撤销单元）。同样用 get_temp + remove 消费（remove_temp 要求 T: Default）。
+        let create_id = Id::new(CREATE_NODE_REQUEST_KEY);
+        let create_req: Option<CreateNodeRequest> = ui.ctx().data(|d| d.get_temp(create_id));
+        if let Some(req) = create_req {
+            ui.ctx()
+                .data_mut(|d| d.remove::<CreateNodeRequest>(create_id));
+            // 与 handle_double_click(Canvas) 同款：stage_edit_snapshot 合并“建点 + 编辑期改动 +
+            // 退出 resolve”为一个撤销单元；new_node_id + add_node + select + set_editing 在同一写闭包内
+            // 一气呵成（§3.1：clone 的 new_node_id 在写闭包外读出）。
+            self.stage_edit_snapshot();
+
+            let new_node_id = self
+                .context
+                .canvas_state_resource
+                .read_resource(|cs| cs.new_node_id());
+            let node = crate::graph::node::Node {
+                id: new_node_id,
+                position: req.canvas_pos,
+                text: String::new(),
+                note: String::new(),
+            };
+            let node_index = self.context.graph_resource.with_resource(|graph| {
+                let idx = graph.add_node(node);
+                graph.selected.clear();
+                graph.select_node(idx);
+                graph.set_editing_node(Some(idx));
+                idx
+            });
+
+            self.transition_to(InputState::EditingNode { node_index });
         }
     }
 
@@ -565,18 +651,18 @@ impl InputStateManager {
     }
 
     fn handle_secondary_button_press(&mut self, _ui: &mut egui::Ui, target: &InputTarget) {
-        // 目前只处理空闲状态下的右键点击
+        // 只在空闲态响应右键按下。
         if !matches!(self.current_state, InputState::Idle) {
             return;
         }
 
-        // 目前只处理：右键点在节点上 → 开始创建从此节点出发的边
-        if let InputTarget::Node(node_index) = target {
-            self.transition_to(InputState::CreatingEdge {
-                source_node: *node_index,
-                current_cursor_pos: self.context.current_mouse_pos,
-            });
-        }
+        // 右键单击 vs 右键拖拽消歧（§3.4 核心难点）：按下**不立即**进 CreatingEdge，而是先进
+        // PendingSecondary 暂存命中目标与按下坐标。后续由 motion（超阈值→连边）/ release
+        // （未超阈值→弹上下文菜单）单点决策，避免右键单击被当成空连边手势。
+        self.transition_to(InputState::PendingSecondary {
+            target: target.clone(),
+            start_pos: self.context.current_mouse_pos,
+        });
 
         self.context
             .pressed_buttons
@@ -621,32 +707,80 @@ impl InputStateManager {
             .set(PointerButton::Primary, false);
     }
 
-    fn handle_secondary_button_release(&mut self, _ui: &mut egui::Ui, target: &InputTarget) {
-        if let InputState::CreatingEdge {
-            source_node,
-            current_cursor_pos: _,
-        } = self.current_state
-        {
-            match target {
-                InputTarget::Node(target_node) => {
-                    // 创建边到目标节点
-                    if source_node != *target_node {
-                        self.create_edge(source_node, *target_node);
+    fn handle_secondary_button_release(&mut self, ui: &mut egui::Ui, target: &InputTarget) {
+        // 右键释放的**唯一**消歧/收尾决策点（§3.4：一次性事件管转换，集中一处）：
+        // - PendingSecondary：从未超阈值 → 判为"右键单击" → 写上下文菜单请求（自管弹出）。
+        // - CreatingEdge：右键拖拽已升级为连边手势 → 按落点连边 / 建点+连边。
+        match self.current_state {
+            InputState::PendingSecondary {
+                target: ref menu_target,
+                start_pos,
+            } => {
+                // 二次确认位移仍在阈值内（motion 已会把超阈值的升级为 CreatingEdge，到这里基本必然
+                // 是单击；保险起见再判一次，超阈值则当作未连成的拖拽，不弹菜单）。
+                let moved = (self.context.current_mouse_pos - start_pos).length();
+                if moved <= SECONDARY_DRAG_THRESHOLD {
+                    use crate::ui::context_menu::{
+                        request_context_menu, ContextMenuRequest, ContextMenuTarget,
+                    };
+                    // 右键命中节点但该节点不在当前选区 → 先 clear+select 为单选（与主流编辑器右键语义
+                    // 一致，§3.4 状态机内改动）。避免「删除选中 N 个」的作用对象与右键命中节点分裂导致误删。
+                    if let InputTarget::Node(node_index) = menu_target {
+                        let node_index = *node_index;
+                        let already_selected = self
+                            .context
+                            .graph_resource
+                            .read_resource(|g| g.is_node_selected(node_index));
+                        if !already_selected {
+                            self.context.graph_resource.with_resource(|g| {
+                                g.selected.clear();
+                                g.select_node(node_index);
+                            });
+                        }
                     }
+                    // 命中目标 → 菜单类型。菜单弹出位置 = 按下时的屏幕坐标（菜单锚点更直觉）。
+                    let menu = match menu_target {
+                        InputTarget::Node(node_index) => ContextMenuTarget::Node(*node_index),
+                        InputTarget::Edge(edge_index) => ContextMenuTarget::Edge(*edge_index),
+                        // 画布及其它（ControlPoint/UI 当前不会出现在 secondary 命中里）一律按空白处理。
+                        _ => ContextMenuTarget::Canvas,
+                    };
+                    request_context_menu(
+                        ui.ctx(),
+                        ContextMenuRequest {
+                            target: menu,
+                            screen_pos: start_pos,
+                        },
+                    );
                 }
-                InputTarget::Canvas => {
-                    // 在鼠标位置创建新节点，然后连接
-                    let canvas_pos = self
-                        .context
-                        .screen_to_canvas(self.context.current_mouse_pos);
-                    self.create_node_with_edge(source_node, canvas_pos);
-                }
-                // 处理其他目标...
-                _ => {}
+                self.transition_to(InputState::Idle);
             }
+            InputState::CreatingEdge {
+                source_node,
+                current_cursor_pos: _,
+            } => {
+                match target {
+                    InputTarget::Node(target_node) => {
+                        // 创建边到目标节点
+                        if source_node != *target_node {
+                            self.create_edge(source_node, *target_node);
+                        }
+                    }
+                    InputTarget::Canvas => {
+                        // 在鼠标位置创建新节点，然后连接
+                        let canvas_pos = self
+                            .context
+                            .screen_to_canvas(self.context.current_mouse_pos);
+                        self.create_node_with_edge(source_node, canvas_pos);
+                    }
+                    // 处理其他目标...
+                    _ => {}
+                }
 
-            // 回到空闲状态
-            self.transition_to(InputState::Idle);
+                // 回到空闲状态
+                self.transition_to(InputState::Idle);
+            }
+            _ => {}
         }
 
         self.context
@@ -661,6 +795,23 @@ impl InputStateManager {
         // }
 
         match &self.current_state {
+            InputState::PendingSecondary { target, start_pos } => {
+                // 右键拖拽超阈值 → 升级为连边手势。位移以屏幕坐标算（阈值是屏幕像素，与缩放无关）。
+                let moved = (self.context.current_mouse_pos - *start_pos).length();
+                if moved > SECONDARY_DRAG_THRESHOLD {
+                    // 只有从节点出发的右键拖拽才连边（拖到节点/空白由 release 收尾）；从空白 / 边
+                    // 出发的右键拖拽无连边语义，直接回 Idle（不弹菜单、不连边）。
+                    if let InputTarget::Node(node_index) = target {
+                        let source = *node_index;
+                        self.transition_to(InputState::CreatingEdge {
+                            source_node: source,
+                            current_cursor_pos: self.context.current_mouse_pos,
+                        });
+                    } else {
+                        self.transition_to(InputState::Idle);
+                    }
+                }
+            }
             InputState::Panning {
                 last_cursor_pos: _,
                 dragging,
@@ -788,45 +939,27 @@ impl InputStateManager {
 
         use crate::graph::selection::GraphSelection;
 
-        // 在写闭包外读出当前选区类型（§3.1：克隆出待删集，绝不在写闭包内重入读同资源）。
-        // 节点与边选区互斥（GraphSelection 同时只能是一种），按类型分派删除。
-        let selection = self
+        // 在写闭包外读出选区是否为空（§3.1：读锁闭包结束即释放，不与后续写闭包重入）。
+        // 空选不打快照，避免空撤销项。
+        let empty = self
             .context
             .graph_resource
-            .read_resource(|graph| graph.selected.clone());
-
-        match selection {
-            GraphSelection::Node(nodes_to_remove) => {
-                if nodes_to_remove.is_empty() {
-                    return; // 空选不打快照，避免空撤销项。
-                }
-                // 删除选中节点（连同其边）——经 history 打一次快照，撤销可整组复活（§3.3 索引稳定）。
-                self.context
-                    .history
-                    .mutate(&self.context.graph_resource, |graph| {
-                        for node_index in nodes_to_remove {
-                            graph.remove_node(node_index);
-                        }
-                        graph.selected.clear();
-                    });
-            }
-            GraphSelection::Edge(edges_to_remove) => {
-                if edges_to_remove.is_empty() {
-                    return; // 空选不打快照。
-                }
-                // 删除选中边——经 history 打一次快照可撤销（§3.3：StableGraph 删边后 EdgeIndex 稳定，
-                // 撤销时整图快照替换即复活原边）。只删边、不动端点节点。
-                self.context
-                    .history
-                    .mutate(&self.context.graph_resource, |graph| {
-                        for edge_index in edges_to_remove {
-                            graph.remove_edge(edge_index);
-                        }
-                        graph.selected.clear();
-                    });
-            }
-            GraphSelection::None => {}
+            .read_resource(|graph| match &graph.selected {
+                GraphSelection::Node(ns) => ns.is_empty(),
+                GraphSelection::Edge(es) => es.is_empty(),
+                GraphSelection::None => true,
+            });
+        if empty {
+            return;
         }
+
+        // 删除选区（节点连带邻接边 / 边只删边）——经 history 打一次快照可撤销（§3.3 索引稳定，
+        // Ctrl+Z 整组复活）。remove_selected 是纯图层方法，内部已清空 selected（防悬空索引）。
+        self.context
+            .history
+            .mutate(&self.context.graph_resource, |graph| {
+                graph.remove_selected();
+            });
     }
 
     fn handle_double_click(&mut self, _ui: &mut egui::Ui, target: &InputTarget) {

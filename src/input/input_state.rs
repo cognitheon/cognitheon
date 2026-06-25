@@ -29,6 +29,19 @@ pub enum InputState {
     /// 节点编辑状态 - 用户正在编辑节点文本
     EditingNode { node_index: NodeIndex },
 
+    /// 右键按下待定状态 —— 区分"右键单击（弹上下文菜单）"与"右键拖拽（连边手势）"。
+    ///
+    /// 右键 press 时进入此态、记录命中目标与按下屏幕坐标，**不立即**进 `CreatingEdge`。
+    /// 随后：指针移动超过位移阈值 → 转 `CreatingEdge`（仅当目标是节点，画临时边连边）；
+    /// 右键 release 时若位移仍小于阈值 → 判为单击 → 写"上下文菜单请求"到 temp data。
+    /// 消歧只在 `state_manager.rs` 的 secondary release / motion 单点决策（AGENTS.md §3.4）。
+    PendingSecondary {
+        /// 按下时命中的目标（节点 / 边 / 画布），决定拖拽是否连边、单击弹哪种菜单。
+        target: super::events::InputTarget,
+        /// 按下时的指针屏幕坐标，用于位移阈值判定与菜单锚点。
+        start_pos: Pos2,
+    },
+
     /// 创建边状态 - 用户正在从源节点创建一条边
     CreatingEdge {
         source_node: NodeIndex,
@@ -69,6 +82,7 @@ impl InputState {
             self,
             InputState::Panning { .. }
                 | InputState::DraggingNode { .. }
+                | InputState::PendingSecondary { .. }
                 | InputState::CreatingEdge { .. }
                 | InputState::DraggingControlPoint { .. }
                 | InputState::Selecting { .. }

@@ -41,6 +41,14 @@ const KEYMAP_HELP: &[KeymapSection] = &[
         ],
     ),
     (
+        "右键菜单",
+        &[
+            ("右键单击 节点", "编辑标题 / 删除节点 / 删除选中"),
+            ("右键单击 边", "删除此边 / 跳转到源 / 跳转到目标"),
+            ("右键单击 空白", "在此新建节点 / 全选 / 整理布局"),
+        ],
+    ),
+    (
         "节点",
         &[
             ("双击空白", "新建节点并进入编辑"),
@@ -596,6 +604,227 @@ impl CognitheonApp {
             });
         }
     }
+
+    /// 右键上下文菜单（节点 / 边 / 空白）+ 删除可视 UI。
+    ///
+    /// 自管弹出（`egui::Popup::new(id, ctx, anchor, layer_id)`）而非 egui 原生 `context_menu`，依据见
+    /// [`crate::ui::context_menu`] 模块文档（右键被状态机独占于连边手势，原生 context_menu 会争
+    /// secondary）。请求由状态机判定"右键单击"时写入 temp data，本方法在画布渲染后消费。
+    ///
+    /// 生命周期：用一个本地 `open: bool`（初值 `true`，因为 temp data 里有请求才会进到这里）经
+    /// `open_bool` 交给 Popup；`CloseOnClickOutside` 会在点击菜单外 / Esc 时把 `open` 置 `false`，
+    /// 点击菜单项后我们主动置 `false`。`open` 为 `false` 时清掉 temp data 请求，菜单不再渲染。
+    ///
+    /// 跨帧失效容错（§3.3）：菜单可能跨多帧打开，期间目标 `NodeIndex` / `EdgeIndex` 可能已被删除。
+    /// 回调里所有 `get_node` / `get_edge` / `edge_endpoints` 均 `Option` 容错，目标失效则对应项不显示
+    /// 或菜单整体关闭，**绝不 `.unwrap()`**。
+    fn show_context_menu(&self, ctx: &egui::Context) {
+        use crate::ui::context_menu::{
+            ContextMenuRequest, ContextMenuTarget, CONTEXT_MENU_REQUEST_KEY,
+        };
+
+        let req_id = Id::new(CONTEXT_MENU_REQUEST_KEY);
+        let Some(request) = ctx.data(|d| d.get_temp::<ContextMenuRequest>(req_id)) else {
+            return;
+        };
+
+        let popup_id = Id::new("context_menu_popup");
+        let layer_id = egui::LayerId::new(egui::Order::Foreground, popup_id);
+
+        let mut open = true;
+        // 菜单内某项被点击后置 true：执行完动作后统一关闭菜单（避免在闭包里多处改 open 借用纠缠）。
+        let mut action_taken = false;
+
+        egui::Popup::new(popup_id, ctx.clone(), request.screen_pos, layer_id)
+            .open_bool(&mut open)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .layout(Layout::top_down_justified(Align::Min))
+            .show(|ui| {
+                ui.set_min_width(160.0);
+                match request.target {
+                    ContextMenuTarget::Node(node_index) => {
+                        action_taken |= self.context_menu_node(ui, ctx, node_index);
+                    }
+                    ContextMenuTarget::Edge(edge_index) => {
+                        action_taken |= self.context_menu_edge(ui, ctx, edge_index);
+                    }
+                    ContextMenuTarget::Canvas => {
+                        action_taken |= self.context_menu_canvas(ui, ctx, request.screen_pos);
+                    }
+                }
+            });
+
+        if action_taken {
+            open = false;
+        }
+        if !open {
+            // 菜单关闭：清掉请求，下一帧不再渲染。
+            ctx.data_mut(|d| d.remove::<ContextMenuRequest>(req_id));
+        }
+    }
+
+    /// 节点右键菜单项。返回是否有项被点击（用于关闭菜单）。
+    ///
+    /// 目标节点可能已失效（跨帧打开期间被删）：`get_node` 容错——失效时只显示一条灰色提示、不提供
+    /// 任何操作（§3.3）。
+    fn context_menu_node(
+        &self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        node_index: petgraph::graph::NodeIndex,
+    ) -> bool {
+        // 容错读节点是否仍存在（§3.3：跨帧打开期间可能已被删除）。
+        let exists = self
+            .graph_resource
+            .read_resource(|g| g.get_node(node_index).is_some());
+        if !exists {
+            ui.weak("（节点已不存在）");
+            return false;
+        }
+
+        // 当前选中节点数（多选时提供"删除选中 N 个"）。
+        let selected_count = self
+            .graph_resource
+            .read_resource(|g| g.get_selected_nodes().len());
+
+        let mut acted = false;
+
+        if ui.button("编辑标题").clicked() {
+            // 进入编辑态**不在此处**直接 set_editing_node：那样 editing_node 不被输入状态机持有，
+            // 下一帧 Idle 分支会无条件清掉（编辑框永不出现），且从未 stage、编辑不可撤销。
+            // 改为写 EditNodeRequest，由 state_manager.update() 消费时走与双击同款三件套
+            // （stage_edit_snapshot + select + set_editing_node + transition_to(EditingNode)），
+            // 编辑态由状态机持有、退出经 resolve_on_exit_edit 提交为可撤销单元（详见 context_menu 模块文档）。
+            crate::ui::context_menu::request_edit_node(
+                ctx,
+                crate::ui::context_menu::EditNodeRequest { node: node_index },
+            );
+            acted = true;
+        }
+
+        if ui.button("删除节点").clicked() {
+            // 删除单个节点（连同邻接边），经 history 打一次快照可撤销（§3.3 索引稳定，Ctrl+Z 整组复活）。
+            self.history.mutate(&self.graph_resource, |g| {
+                g.remove_node(node_index);
+                // 删除后清选区，避免悬空索引（§3.3）。
+                g.selected.clear();
+            });
+            acted = true;
+        }
+
+        // 多选时：删除选中的 N 个节点（仅当当前是节点选区且包含 >1 个，避免与"删除节点"重复）。
+        if selected_count > 1 && ui.button(format!("删除选中 {selected_count} 个")).clicked() {
+            self.history.mutate(&self.graph_resource, |g| {
+                g.remove_selected();
+            });
+            acted = true;
+        }
+
+        acted
+    }
+
+    /// 边右键菜单项。返回是否有项被点击。
+    ///
+    /// 目标边可能已失效；端点经 `edge_endpoints` 容错读取（§3.3）。"跳转到源/目标"对**所有边**
+    /// （wiki 边与手画边一视同仁）提供——跳转复用 `focus_node`（选中 + 居中），对两类边都安全；
+    /// 端点节点失效时对应项灰显（`add_enabled(false, …)`）。
+    fn context_menu_edge(
+        &self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        edge_index: petgraph::graph::EdgeIndex,
+    ) -> bool {
+        // 容错读端点（§3.3）：跨帧打开期间边可能已被删 → endpoints 为 None。
+        let endpoints = self
+            .graph_resource
+            .read_resource(|g| g.graph.edge_endpoints(edge_index));
+        let Some((source, target)) = endpoints else {
+            ui.weak("（边已不存在）");
+            return false;
+        };
+
+        let mut acted = false;
+
+        if ui.button("删除此边").clicked() {
+            // 只删边、不动端点节点，经 history 可撤销。
+            self.history.mutate(&self.graph_resource, |g| {
+                g.remove_edge(edge_index);
+                g.selected.clear();
+            });
+            acted = true;
+        }
+
+        ui.separator();
+
+        // 跳转到源 / 目标：复用 focus_node（选中 + 居中）。端点节点存在才可点（§3.3 容错）。
+        let source_ok = self
+            .graph_resource
+            .read_resource(|g| g.get_node(source).is_some());
+        let target_ok = self
+            .graph_resource
+            .read_resource(|g| g.get_node(target).is_some());
+
+        if ui
+            .add_enabled(source_ok, egui::Button::new("跳转到源节点"))
+            .clicked()
+        {
+            self.focus_node(ctx, source);
+            acted = true;
+        }
+        if ui
+            .add_enabled(target_ok, egui::Button::new("跳转到目标节点"))
+            .clicked()
+        {
+            self.focus_node(ctx, target);
+            acted = true;
+        }
+
+        acted
+    }
+
+    /// 空白画布右键菜单项。返回是否有项被点击。
+    fn context_menu_canvas(
+        &self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        screen_pos: egui::Pos2,
+    ) -> bool {
+        let mut acted = false;
+
+        if ui.button("在此新建节点").clicked() {
+            // 右键单击处屏幕坐标 → 画布坐标（§3.2）。**不在此处** add_node + set_editing_node：
+            // 直接设 editing_node 会被下一帧 Idle 分支清掉（编辑框永不出现）。改为写 CreateNodeRequest，
+            // 由 state_manager.update() 消费时走与双击空白建点同款链路（stage_edit_snapshot + add_node
+            // + select + set_editing_node + transition_to(EditingNode)），create+edit 为**单一撤销单元**，
+            // 且编辑态由状态机持有、新建节点真能进入编辑框（详见 context_menu 模块文档）。
+            let canvas_pos = self
+                .canvas_resource
+                .read_resource(|cs| cs.to_canvas(screen_pos));
+            crate::ui::context_menu::request_create_node(
+                ctx,
+                crate::ui::context_menu::CreateNodeRequest { canvas_pos },
+            );
+            acted = true;
+        }
+
+        if ui.button("全选").clicked() {
+            // 全选是运行态（选区，#[serde(skip)]），非图数据变更——不经 history。
+            self.graph_resource.with_resource(|g| g.select_all_nodes());
+            acted = true;
+        }
+
+        if ui.button("整理布局").clicked() {
+            // 与菜单栏「整理布局」同一入口：力导向布局批量改 position，经 history 可撤销，随后 zoom-to-fit。
+            let affected = self.history.mutate(&self.graph_resource, |g| {
+                layout::layout_graph(g, LayoutParams::default())
+            });
+            log::info!("force-directed layout applied to {affected} nodes (context menu)");
+            self.zoom_to_fit(ctx);
+            acted = true;
+        }
+
+        acted
+    }
 }
 
 /// 把 `text` 布局成 [`LayoutJob`]，其中（大小写不敏感地）匹配 `query` 的子串用 `hit` 色标出，
@@ -940,6 +1169,35 @@ impl eframe::App for CognitheonApp {
                         ui.close();
                         self.history.redo(&self.graph_resource);
                     }
+
+                    ui.separator();
+
+                    // 删除选中：按当前选区类型显示「删除 N 项」，无选区灰显。删除经 remove_selected
+                    // （纯图层）+ history.mutate 包裹可撤销；删点连带删邻接边、删后清选区（§3.3）。
+                    // 编辑态禁用（与 Undo/Redo 对称——编辑期不应整图删除）。
+                    use crate::graph::selection::GraphSelection;
+                    let sel_count = self.graph_resource.read_resource(|g| match &g.selected {
+                        GraphSelection::Node(ns) => ns.len(),
+                        GraphSelection::Edge(es) => es.len(),
+                        GraphSelection::None => 0,
+                    });
+                    let del_label = if sel_count > 0 {
+                        format!("删除选中（{sel_count} 项）")
+                    } else {
+                        "删除选中".to_owned()
+                    };
+                    if ui
+                        .add_enabled(
+                            sel_count > 0 && !editing,
+                            egui::Button::new(del_label).shortcut_text("Delete"),
+                        )
+                        .clicked()
+                    {
+                        ui.close();
+                        self.history.mutate(&self.graph_resource, |g| {
+                            g.remove_selected();
+                        });
+                    }
                 });
 
                 ui.add_space(16.0);
@@ -1082,6 +1340,11 @@ impl eframe::App for CognitheonApp {
         }) {
             self.focus_node(&ctx, target);
         }
+
+        // 右键上下文菜单（隐式状态总线）：状态机判为"右键单击"时把请求写入 temp data，这里在画布
+        // 渲染之后读取并自管弹出（egui::Popup::new(id, ctx, anchor, layer_id)）。放在画布渲染之后，
+        // 确保拿得到本帧请求；菜单关闭时清掉请求。
+        self.show_context_menu(&ctx);
 
         // ctx.show_viewport_deferred(
         //     ViewportId::from_hash_of("test"),

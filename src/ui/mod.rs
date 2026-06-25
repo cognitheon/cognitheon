@@ -1,5 +1,6 @@
 pub mod bezier;
 pub mod canvas;
+pub mod context_menu;
 pub mod edge;
 pub mod edge_trait;
 pub mod helpers;
