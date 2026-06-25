@@ -17,6 +17,79 @@ use crate::input::state_manager::InputStateManager;
 use crate::ui::canvas::data::CanvasWidget;
 use crate::wikilink;
 
+/// 快捷键 / 手势帮助文案的**单一来源**（避免文案与实现漂移）。
+///
+/// 结构：`&[(分组标题, &[(按键/手势, 说明)])]`。`show_keymap_help` 据此渲染分组表格。
+/// 每条都对照真实绑定核对过：
+/// - 画布导航：`state_manager` 的 `handle_space_*`（Space 平移）、`handle_scroll`（滚轮平移）、
+///   `handle_zoom`（`zoom_delta`：Ctrl+滚轮 / 触控板捏合缩放）、右键 press/release（连边 / 建点+连边）。
+/// - 节点 / 选择：`handle_double_click`、`handle_primary_button_press`（含 Shift 加选）、
+///   `handle_delete_key`（Delete/Backspace）、`Selecting` 框选。
+/// - 编辑：`node.rs::show_editor` 的 Ctrl/Cmd+Enter 退出 + `wikilink_autocomplete`（`[[` 触发，
+///   Tab/Enter 确认、↑↓ 选择、Esc 关闭）。
+/// - 历史 / 搜索：`app.rs::ui` 顶部的 Ctrl/Cmd+Z、Ctrl/Cmd+Y、Ctrl/Cmd+Shift+Z、Ctrl/Cmd+P。
+type KeymapSection = (&'static str, &'static [(&'static str, &'static str)]);
+const KEYMAP_HELP: &[KeymapSection] = &[
+    (
+        "画布导航",
+        &[
+            ("Space + 拖动", "平移画布"),
+            ("滚轮", "平移画布"),
+            ("Ctrl + 滚轮 / 触控板捏合", "缩放画布（以指针为中心）"),
+            ("右键拖动 节点→节点", "连边"),
+            ("右键拖动 节点→空白", "新建节点并连边"),
+        ],
+    ),
+    (
+        "节点",
+        &[
+            ("双击空白", "新建节点并进入编辑"),
+            ("双击节点", "进入编辑"),
+            ("单击节点", "选中"),
+            ("拖动节点", "移动（含已选中的多个）"),
+            ("Delete / Backspace", "删除选中节点（连同其边）"),
+        ],
+    ),
+    (
+        "选择",
+        &[
+            ("左键拖框", "框选"),
+            ("Shift + 单击节点", "加入 / 切换选择"),
+            ("Shift + 拖框", "在已有选择上追加框选"),
+        ],
+    ),
+    (
+        "编辑",
+        &[
+            ("Ctrl / Cmd + Enter", "退出编辑并解析正文 [[双链]]"),
+            ("[[", "触发标题自动补全"),
+            ("Tab / Enter", "确认补全候选"),
+            ("↑ / ↓", "在补全候选间移动"),
+            ("Esc", "关闭补全 / 退出编辑"),
+        ],
+    ),
+    (
+        "历史",
+        &[
+            ("Ctrl / Cmd + Z", "撤销"),
+            ("Ctrl / Cmd + Y", "重做"),
+            ("Ctrl / Cmd + Shift + Z", "重做"),
+        ],
+    ),
+    (
+        "搜索 / 导航",
+        &[(
+            "Ctrl / Cmd + P",
+            "命令面板（搜索；↑↓ 移动、Enter 跳转、Esc 关闭）",
+        )],
+    ),
+    (
+        "布局",
+        &[("菜单「整理布局」", "力导向自动布局 + 缩放至全部可见")],
+    ),
+    ("帮助", &[("? / F1", "打开 / 关闭本帮助")]),
+];
+
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
@@ -227,6 +300,63 @@ impl CognitheonApp {
             }
             ui.add_space(4.0);
         }
+    }
+
+    /// 快捷键 / 手势帮助浮层（按 `?` / `F1` 开关，菜单「帮助」亦可开）。
+    ///
+    /// 纯 UI、零数据层：开关状态存 egui temp data `keymap_help_open` (`bool`)，不进序列化
+    /// （隐式状态总线约定）。文案来自单一来源 [`KEYMAP_HELP`] 常量表，与真实绑定对齐。
+    ///
+    /// 范式复刻 [`Self::show_command_palette`]：`egui::Area`(Order::Foreground) 居中 +
+    /// `Frame::popup`。开关与 Esc 关闭都在 [`eframe::App::ui`] 顶部、画布 `state_manager`
+    /// 渲染之前完成（§3.4 输入只在 app.rs 顶部 consume），故画布状态机当帧看不到这些键。
+    fn show_keymap_help(&self, ctx: &egui::Context) {
+        let open_id = Id::new("keymap_help_open");
+        if !ctx.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false) {
+            return;
+        }
+
+        egui::Area::new(Id::new("keymap_help_area"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .movable(false)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style())
+                    .inner_margin(egui::Margin::same(12))
+                    .show(ui, |ui| {
+                        ui.set_width(420.0);
+
+                        ui.horizontal(|ui| {
+                            ui.heading("快捷键 / 手势");
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ui.weak("? / F1 / Esc 关闭");
+                            });
+                        });
+                        ui.separator();
+
+                        egui::ScrollArea::vertical()
+                            .max_height(440.0)
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                for (section, rows) in KEYMAP_HELP {
+                                    ui.add_space(4.0);
+                                    ui.label(RichText::new(*section).strong());
+                                    egui::Grid::new(("keymap_help_grid", *section))
+                                        .num_columns(2)
+                                        .spacing([16.0, 4.0])
+                                        .striped(true)
+                                        .show(ui, |ui| {
+                                            for (keys, desc) in *rows {
+                                                ui.label(RichText::new(*keys).monospace());
+                                                ui.label(*desc);
+                                                ui.end_row();
+                                            }
+                                        });
+                                    ui.add_space(2.0);
+                                }
+                            });
+                    });
+            });
     }
 
     /// 命令面板（全文搜索 / 快速跳转）。
@@ -566,6 +696,55 @@ impl eframe::App for CognitheonApp {
         //         );
         //     });
         // }
+        // 快捷键帮助浮层：? / F1 开关，Esc 关闭。在任何面板（尤其画布 state_manager）渲染前
+        // 截获并 consume，与 Ctrl+P 同范式（§3.4 输入只在 app.rs 顶部 consume）。
+        //
+        // `?` 的消费依据（egui 0.34）：egui 把逻辑字符 '?' 映射为 `Key::Questionmark`
+        // （见 `Key::from_name`：`"?" => Questionmark`）；而 `consume_key` 走 `matches_logically`，
+        // 文档明确「忽略多余的 Shift/Alt」——故 `consume_key(NONE, Questionmark)` 能匹配
+        // Shift+/ 产出的 '?'，不必显式带 SHIFT。为兼容个别把 '?' 报成 `Slash`+Shift 的布局，
+        // 再额外消费一次 `SHIFT + Slash` 兜底。F1 直接消费。
+        //
+        // 门控：`?` 是文本字符，编辑态 / 任意文本框（命令面板搜索框等）持焦时必须放行给
+        // TextEdit，否则每打一次 '?' 都会被这里 consume 并翻转浮层（字符仍经独立 Event::Text
+        // 插入，但浮层乱闪）。`editing` 走 graph 读锁（闭包结束即释放，不与后续取锁嵌套，§3.1，
+        // 复用 undo 路径同款读法）；`egui_wants_keyboard_input()` 覆盖「任意 TextEdit 持焦」
+        // （egui 0.34 该方法即 `memory.focused().is_some()`；旧名 `wants_keyboard_input` 已 deprecated）。
+        // F1 不是文本字符、无冲突，故不门控——编辑态也能呼出帮助。
+        let editing = self
+            .graph_resource
+            .read_resource(|g| g.get_editing_node().is_some());
+        let text_focus = editing || ctx.egui_wants_keyboard_input();
+        let toggle_help = ctx.input_mut(|i| {
+            let question = !text_focus
+                && (i.consume_key(egui::Modifiers::NONE, egui::Key::Questionmark)
+                    | i.consume_key(egui::Modifiers::SHIFT, egui::Key::Slash));
+            let f1 = i.consume_key(egui::Modifiers::NONE, egui::Key::F1);
+            question | f1
+        });
+        let help_open_id = Id::new("keymap_help_open");
+        let palette_open_id = Id::new("command_palette_open");
+        // 帮助浮层打开时，Esc 优先关它（consume 掉，不冒泡给命令面板/画布状态机）。
+        let help_is_open = ctx
+            .data(|d| d.get_temp::<bool>(help_open_id))
+            .unwrap_or(false);
+        let help_esc = help_is_open
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        if toggle_help || help_esc {
+            // toggle：? / F1 翻转；Esc 仅在开着时关闭。
+            let now_open = if help_esc { false } else { !help_is_open };
+            ctx.data_mut(|d| d.insert_temp(help_open_id, now_open));
+            // 浮层互斥：打开帮助时若命令面板开着则关掉它（清掉其全部 temp 状态）。
+            if now_open {
+                ctx.data_mut(|d| {
+                    d.remove::<bool>(palette_open_id);
+                    d.remove::<String>(Id::new("command_palette_query"));
+                    d.remove::<usize>(Id::new("command_palette_sel"));
+                    d.remove::<bool>(Id::new("command_palette_just_opened"));
+                });
+            }
+        }
+
         // 命令面板：Ctrl+P 开关。在任何面板（尤其画布 state_manager）渲染前截获并 consume，
         // 避免快捷键泄漏到菜单栏 / 画布状态机。再次 Ctrl+P 关闭（Esc 关闭在面板内处理）。
         let toggle_palette = ctx.input_mut(|i| {
@@ -582,6 +761,8 @@ impl eframe::App for CognitheonApp {
                     d.insert_temp(Id::new("command_palette_just_opened"), true);
                     d.insert_temp(Id::new("command_palette_query"), String::new());
                     d.insert_temp(Id::new("command_palette_sel"), 0usize);
+                    // 浮层互斥：打开命令面板时若帮助浮层开着则关掉它。
+                    d.remove::<bool>(help_open_id);
                 } else {
                     d.remove::<String>(Id::new("command_palette_query"));
                     d.remove::<usize>(Id::new("command_palette_sel"));
@@ -591,6 +772,8 @@ impl eframe::App for CognitheonApp {
         }
         // 面板打开时，导航键（↑↓/Enter/Esc）在此 consume，赶在画布 state_manager 之前。
         self.show_command_palette(&ctx);
+        // 帮助浮层（静态文本，无导航键；Esc/开关已在上方 consume）。与命令面板互斥、并列渲染。
+        self.show_keymap_help(&ctx);
 
         // 撤销/重做快捷键：与 Ctrl+P 同范式，在画布 state_manager 渲染前截获并 consume，
         // 赶在状态机之前（避免 Delete/移动等被状态机当帧再处理）。
@@ -811,6 +994,33 @@ impl eframe::App for CognitheonApp {
                     self.history
                         .mutate(&self.graph_resource, |graph| graph.edge_type = edge_type);
                 }
+
+                ui.add_space(16.0);
+
+                // 帮助入口：与 ? / F1 共用同一 `keymap_help_open` 标志（纯 UI、不进序列化），
+                // 点击翻转开关并维持与命令面板的互斥（打开帮助时关掉命令面板）。
+                ui.menu_button("帮助", |ui| {
+                    if ui
+                        .add(egui::Button::new("快捷键 / 手势").shortcut_text("? / F1"))
+                        .clicked()
+                    {
+                        ui.close();
+                        let help_open_id = Id::new("keymap_help_open");
+                        let now_open = !ctx
+                            .data(|d| d.get_temp::<bool>(help_open_id))
+                            .unwrap_or(false);
+                        ctx.data_mut(|d| {
+                            d.insert_temp(help_open_id, now_open);
+                            if now_open {
+                                // 浮层互斥：打开帮助时关掉命令面板（清其全部 temp 状态）。
+                                d.remove::<bool>(Id::new("command_palette_open"));
+                                d.remove::<String>(Id::new("command_palette_query"));
+                                d.remove::<usize>(Id::new("command_palette_sel"));
+                                d.remove::<bool>(Id::new("command_palette_just_opened"));
+                            }
+                        });
+                    }
+                });
             });
         });
 
