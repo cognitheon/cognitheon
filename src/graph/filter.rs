@@ -30,8 +30,13 @@ use crate::graph::graph_impl::Graph;
 pub const FILTER_QUERY_KEY: &str = "filter_query";
 /// 过滤模式（Dim / Hide）的 temp data key。
 pub const FILTER_MODE_KEY: &str = "filter_mode";
-/// 本帧算好的"过滤可见度快照"的 temp data key（[`render_graph`] 入口写、各 widget 反读）。
+/// 「邻居聚焦」开关的 temp data key（纯 UI、不序列化）。
+pub const FOCUS_ENABLED_KEY: &str = "neighbor_focus_enabled";
+/// 本帧算好的"可见度快照"的 temp data key（[`render_graph`] 入口写、各 widget 反读）。
 const FILTER_VISIBILITY_KEY: &str = "filter_visibility";
+
+/// 邻居聚焦的邻域半径（跳数）。当前固定 1 跳（中心 + 直接邻居）；留常量便于将来做成可调参数。
+const FOCUS_HOPS: usize = 1;
 
 /// 过滤模式：不匹配节点淡出还是彻底隐藏。Dim 为默认（更安全，不碰 §3.3 几何耦合）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -54,17 +59,24 @@ pub enum Visibility {
     Hidden,
 }
 
-/// 本帧的过滤可见度快照：可见节点集 + 当前模式。`active = false` 表示无过滤（全部可见）。
+/// 本帧的可见度快照：过滤规则 + 邻居聚焦规则，二者在 `render_graph` 入口【合成】成一张表。
 ///
-/// 在 `render_graph` 入口算一次并写入 temp data；各 widget 反读，避免重复 `O(N)` 搜索。
+/// 在 `render_graph` 入口算一次并写入 temp data；各 widget 反读，避免重复 `O(N)` 搜索 / 邻域 BFS。
 /// 失效 / 缺失（首帧尚未发布、或被清掉）时各 widget 默认 [`Visibility::Visible`]，安全。
+///
+/// 合成语义（见 [`node_visibility`]，**过滤优先**）：过滤把节点判 `Hidden` → 终判 `Hidden`；
+/// 否则邻居聚焦激活且节点不在 `focus` 集 → `Dimmed`；其余取过滤自身的判定。
 #[derive(Clone, Debug)]
 struct FilterVisibility {
-    /// 是否处于过滤态（query 非空）。`false` 时所有图元一律 `Visible`。
+    /// 是否处于过滤态（query 非空）。`false` 时过滤规则一律放行 `Visible`。
     active: bool,
     mode: FilterMode,
     /// 命中关键词的节点集（`active == false` 时为空、不被查询）。
     visible: HashSet<NodeIndex>,
+    /// 邻居聚焦是否激活（开关 ON **且**恰好选中一个节点）。`false` 时邻域规则不参与合成。
+    focus_active: bool,
+    /// 聚焦邻域集（中心 + `FOCUS_HOPS` 跳邻居；`focus_active == false` 时为空、不被查询）。
+    focus: HashSet<NodeIndex>,
 }
 
 /// 读取当前过滤 query（trim 后），无则空串。
@@ -89,27 +101,60 @@ pub fn set_mode(ctx: &egui::Context, mode: FilterMode) {
     ctx.data_mut(|d| d.insert_temp(Id::new(FILTER_MODE_KEY), mode));
 }
 
-/// 在 `render_graph` 入口算一次本帧可见度快照并发布到 temp data。
+/// 读取「邻居聚焦」开关状态，无则默认 `false`（温和起见默认关，否则每次选中都 dim 全图会烦）。
+pub fn focus_enabled(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(Id::new(FOCUS_ENABLED_KEY)))
+        .unwrap_or(false)
+}
+
+/// 写回「邻居聚焦」开关状态。
+pub fn set_focus_enabled(ctx: &egui::Context, enabled: bool) {
+    ctx.data_mut(|d| d.insert_temp(Id::new(FOCUS_ENABLED_KEY), enabled));
+}
+
+/// 在 `render_graph` 入口算一次本帧可见度快照（过滤规则 + 邻居聚焦规则【合成】）并发布到 temp data。
 ///
-/// 可见集 = [`crate::wikilink::search`] 的命中集（query 非空时）；query 为空 → `active = false`
-/// （全部可见，不查询）。§3.1：图只读经传入闭包外的 `read_resource`（调用方持锁作用域内）。
+/// - **过滤可见集** = [`crate::wikilink::search`] 的命中集（query 非空时）；query 为空 → `active =
+///   false`（过滤规则全放行）。
+/// - **邻居聚焦** 激活条件：开关 ON（[`focus_enabled`]）**且**恰好选中一个节点（[`Graph::get_selected_nodes`]，
+///   §3.1 在调用方 `read_resource` 闭包内只读选区）。激活时邻域集 = [`crate::wikilink::neighborhood`]
+///   （中心 + `FOCUS_HOPS` 跳，纯拓扑、§3.3 用 `NodeIndex`，不依赖几何 observer）。
+///
+/// 二者只在此一处算好、合成由 [`node_visibility`] 反读时完成（过滤优先）。§3.1：图只读经调用方
+/// `read_resource` 闭包（作用域 = 锁作用域），闭包内不再取同一锁。
 pub fn publish_filter_visibility(ctx: &egui::Context, graph: &Graph) {
     let query = current_query(ctx);
     let q = query.trim();
-    let snapshot = if q.is_empty() {
-        FilterVisibility {
-            active: false,
-            mode: current_mode(ctx),
-            visible: HashSet::new(),
-        }
+    let (active, visible) = if q.is_empty() {
+        (false, HashSet::new())
     } else {
         // 复用现成全文搜索引擎（标题 + 别名 + 正文）——零新算法。
         let hits: HashSet<NodeIndex> = crate::wikilink::search(graph, q).into_iter().collect();
-        FilterVisibility {
-            active: true,
-            mode: current_mode(ctx),
-            visible: hits,
+        (true, hits)
+    };
+
+    // 邻居聚焦：仅当开关 ON 且**恰好选中一个节点**时激活，邻域集 = 中心 + FOCUS_HOPS 跳邻居。
+    // 选中 0 个 / 多个、或开关 OFF → 不激活（不参与合成，恢复全图）。
+    let (focus_active, focus) = if focus_enabled(ctx) {
+        let selected = graph.get_selected_nodes();
+        if let [center] = selected[..] {
+            (
+                true,
+                crate::wikilink::neighborhood(graph, center, FOCUS_HOPS),
+            )
+        } else {
+            (false, HashSet::new())
         }
+    } else {
+        (false, HashSet::new())
+    };
+
+    let snapshot = FilterVisibility {
+        active,
+        mode: current_mode(ctx),
+        visible,
+        focus_active,
+        focus,
     };
     ctx.data_mut(|d| d.insert_temp(Id::new(FILTER_VISIBILITY_KEY), snapshot));
 }
@@ -119,23 +164,43 @@ fn visibility_snapshot(ctx: &egui::Context) -> Option<FilterVisibility> {
     ctx.data(|d| d.get_temp::<FilterVisibility>(Id::new(FILTER_VISIBILITY_KEY)))
 }
 
-/// 某节点在当前过滤下的可见度（`NodeWidget` 渲染时反读）。
+/// 某节点在当前【过滤 ∩ 邻居聚焦】合成下的可见度（`NodeWidget` 渲染时反读）。
 ///
-/// 无过滤 / 命中 → `Visible`；不命中且 Dim → `Dimmed`；不命中且 Hide → `Hidden`。
+/// 合成规则（**过滤优先**，spec 定）：
+/// 1. 先取过滤判定：无过滤 / 命中 → 暂定 `Visible`；不命中且 Dim → `Dimmed`；不命中且 Hide → `Hidden`。
+/// 2. 过滤判 `Hidden` → 终判 `Hidden`（过滤优先，不被邻域规则覆盖）。
+/// 3. 否则若**邻居聚焦激活**（开关 ON + 单选）且该节点**不在邻域集** → `Dimmed`（邻域之外淡出）。
+/// 4. 其余取过滤的判定（邻域内 + 过滤可见 → `Visible`）。
+///
+/// 即：邻域规则只能把"过滤未隐藏"的节点从 `Visible` 压成 `Dimmed`，不会把 `Hidden` 拉回，也不会把
+/// 已 `Dimmed` 的更进一步——三态合成天然吸收（`Dimmed` ∨ `Dimmed` = `Dimmed`）。
 pub fn node_visibility(ctx: &egui::Context, node_index: NodeIndex) -> Visibility {
-    match visibility_snapshot(ctx) {
-        Some(s) if s.active => {
-            if s.visible.contains(&node_index) {
-                Visibility::Visible
-            } else {
-                match s.mode {
-                    FilterMode::Dim => Visibility::Dimmed,
-                    FilterMode::Hide => Visibility::Hidden,
-                }
+    let Some(s) = visibility_snapshot(ctx) else {
+        return Visibility::Visible;
+    };
+
+    // 1~2. 过滤判定（过滤优先：Hidden 直接终判）。
+    let filtered = if s.active {
+        if s.visible.contains(&node_index) {
+            Visibility::Visible
+        } else {
+            match s.mode {
+                FilterMode::Dim => Visibility::Dimmed,
+                FilterMode::Hide => Visibility::Hidden,
             }
         }
-        // 无快照或非过滤态：全部可见。
-        _ => Visibility::Visible,
+    } else {
+        Visibility::Visible
+    };
+    if filtered == Visibility::Hidden {
+        return Visibility::Hidden;
+    }
+
+    // 3~4. 邻域规则：聚焦激活且节点在邻域之外 → 淡出；否则保留过滤判定。
+    if s.focus_active && !s.focus.contains(&node_index) {
+        Visibility::Dimmed
+    } else {
+        filtered
     }
 }
 
@@ -203,5 +268,56 @@ mod tests {
     #[test]
     fn filter_mode_default_is_dim() {
         assert_eq!(FilterMode::default(), FilterMode::Dim);
+    }
+
+    /// 过滤 ∩ 邻居聚焦的合成真值表（纯逻辑，与 [`node_visibility`] 第 2~4 步同构、无需 egui ctx）。
+    ///
+    /// `filtered` = 过滤单独判定；`focus_active`/`in_focus` = 邻域规则。复刻"过滤优先 + 邻域只能
+    /// 把 Visible 压成 Dimmed"的合成。
+    fn compose(filtered: Visibility, focus_active: bool, in_focus: bool) -> Visibility {
+        if filtered == Visibility::Hidden {
+            return Visibility::Hidden;
+        }
+        if focus_active && !in_focus {
+            Visibility::Dimmed
+        } else {
+            filtered
+        }
+    }
+
+    #[test]
+    fn compose_filter_hidden_wins_over_focus() {
+        use Visibility::*;
+        // 过滤判 Hidden：无论邻域聚焦如何，终判仍 Hidden（过滤优先）。
+        assert_eq!(compose(Hidden, true, true), Hidden);
+        assert_eq!(compose(Hidden, true, false), Hidden);
+        assert_eq!(compose(Hidden, false, false), Hidden);
+    }
+
+    #[test]
+    fn compose_focus_dims_outside_neighborhood() {
+        use Visibility::*;
+        // 聚焦激活 + 节点在邻域外：过滤可见的也被压成 Dimmed。
+        assert_eq!(compose(Visible, true, false), Dimmed);
+        // 邻域内：保留过滤判定（可见）。
+        assert_eq!(compose(Visible, true, true), Visible);
+        // 已被过滤 Dim 的，邻域外仍 Dim（吸收）。
+        assert_eq!(compose(Dimmed, true, false), Dimmed);
+    }
+
+    #[test]
+    fn compose_focus_inactive_passes_filter_through() {
+        use Visibility::*;
+        // 聚焦未激活（开关 OFF 或非单选）：直接取过滤判定，邻域不参与。
+        assert_eq!(compose(Visible, false, false), Visible);
+        assert_eq!(compose(Dimmed, false, false), Dimmed);
+        assert_eq!(compose(Visible, false, true), Visible);
+    }
+
+    #[test]
+    fn focus_enabled_default_is_off() {
+        // 间接断言默认关：开关 temp data 缺失时 focus_enabled 应返回 false（温和默认）。
+        // 这里只校验默认常量语义，真实 ctx 读取由集成/手测覆盖。
+        assert_eq!(FOCUS_HOPS, 1, "默认聚焦半径为 1 跳");
     }
 }

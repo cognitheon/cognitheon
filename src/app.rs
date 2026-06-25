@@ -538,6 +538,20 @@ impl CognitheonApp {
         if ui.button("✖").on_hover_text("清空过滤").clicked() {
             set_query(&ctx, String::new());
         }
+
+        ui.add_space(8.0);
+
+        // 邻居聚焦开关（默认关）：ON 且恰好选中一个节点时，该节点 + 直接邻居（1 跳）+ 连接它们的边
+        // 保持高亮、其余淡出（复用过滤的 Dim 渲染管线，在 render_graph 入口与过滤合成、过滤优先）。
+        // 纯 UI / temp data，不进 history / 序列化（仿 filter 开关风格）。
+        let mut focus = crate::graph::filter::focus_enabled(&ctx);
+        if ui
+            .checkbox(&mut focus, "邻域聚焦")
+            .on_hover_text("选中单个节点时高亮其邻居、淡出其余（取消选中恢复全图）")
+            .changed()
+        {
+            crate::graph::filter::set_focus_enabled(&ctx, focus);
+        }
     }
 
     /// 命令面板（全文搜索 / 快速跳转）。

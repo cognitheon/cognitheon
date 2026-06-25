@@ -5,6 +5,8 @@
 //!
 //! 这一层只操作 [`Graph`] 数据与 id 分配（经 [`CanvasStateResource`]），渲染/交互留给 UI 层。
 
+use std::collections::{HashSet, VecDeque};
+
 use petgraph::graph::NodeIndex;
 
 use crate::graph::edge::Edge;
@@ -271,6 +273,46 @@ pub fn orphan_nodes(graph: &Graph) -> Vec<NodeIndex> {
         .collect()
 }
 
+/// 以 `center` 为中心、半径 `hops` 跳的**邻域节点集**（含 `center` 自身），纯拓扑、不依赖几何。
+///
+/// "邻居聚焦"的数据源（Obsidian 局部图谱同理）：选中一个节点时，把它 + `hops` 跳内可达的邻居高亮、
+/// 其余淡出。判定走**无向邻接**（`StableGraph::neighbors_undirected`：出/入边一视同仁），与
+/// [`orphan_nodes`] / [`backlinks`] 同口径用 `NodeIndex` 句柄（§3.3），无一帧延迟、无几何 `.unwrap()`
+/// panic 风险（比隐藏耦合安全）。
+///
+/// 语义：
+/// - `hops == 0`：只含 `center` 自身（退化，供"只聚焦中心"用）。
+/// - `hops == 1`：`center` + 直接邻居（默认聚焦半径）。
+/// - `hops >= 2`：逐层 BFS 扩展，每个节点只计**最短跳数**、不重复。
+/// - 孤立节点（无任何边）的邻域恒为其自身。
+/// - `center` 已失效（被删）则返回空集——`neighbors_undirected` 对不存在的索引产出空迭代器、不 panic。
+/// - **自环**：自环邻居即 `center`，已被 `center` 自身覆盖，不致重复或漏算。
+///
+/// 复杂度 `O(邻域内边数)`：BFS 只遍历被访问节点的邻接，不扫全图。
+pub fn neighborhood(graph: &Graph, center: NodeIndex, hops: usize) -> HashSet<NodeIndex> {
+    let mut visited: HashSet<NodeIndex> = HashSet::new();
+    // center 失效（不在图中）时直接返回空集，避免把悬空索引当中心。
+    if graph.get_node(center).is_none() {
+        return visited;
+    }
+    visited.insert(center);
+    // (节点, 已用跳数) 的 BFS 队列；按最短跳数分层扩展，达到 hops 即止。
+    let mut frontier: VecDeque<(NodeIndex, usize)> = VecDeque::new();
+    frontier.push_back((center, 0));
+    while let Some((node, depth)) = frontier.pop_front() {
+        if depth >= hops {
+            continue;
+        }
+        for nb in graph.graph.neighbors_undirected(node) {
+            // HashSet 去重：多重边 / 已访问节点只入队一次，自环邻居即 center 已在集内。
+            if visited.insert(nb) {
+                frontier.push_back((nb, depth + 1));
+            }
+        }
+    }
+    visited
+}
+
 /// 全文搜索：标题、**别名**或正文包含 `query`（**大小写不敏感**的子串匹配）的节点，
 /// 按节点索引顺序返回。
 ///
@@ -535,6 +577,144 @@ mod tests {
         let eidx = g.graph.edge_indices().next().unwrap();
         g.graph.remove_edge(eidx);
         assert_eq!(orphan_nodes(&g), vec![a, b], "删边后两端都回到孤立");
+    }
+
+    // ===== 邻域聚焦 neighborhood =====
+
+    #[test]
+    fn neighborhood_isolated_node_is_self_only() {
+        // 孤立节点（无任何边）：任意跳数邻域恒为自身。
+        let (g, _c) = graph_with(&["A", "B"]);
+        let a = find_by_title(&g, "A").unwrap();
+        assert_eq!(neighborhood(&g, a, 1), HashSet::from([a]));
+        assert_eq!(neighborhood(&g, a, 3), HashSet::from([a]));
+    }
+
+    #[test]
+    fn neighborhood_zero_hops_is_self_only() {
+        // hops == 0：即使有邻居也只含中心自身（退化分支）。
+        let (mut g, canvas) = graph_with(&["A", "B"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        g.add_edge(Edge::new(
+            a,
+            b,
+            egui::pos2(0.0, 0.0),
+            egui::pos2(0.0, 0.0),
+            canvas.clone(),
+        ));
+        assert_eq!(neighborhood(&g, a, 0), HashSet::from([a]));
+    }
+
+    #[test]
+    fn neighborhood_one_hop_chain() {
+        // 链 A - B - C：1 跳邻域 = 中心 + 直接邻居（无向，方向无关）。
+        let (mut g, canvas) = graph_with(&["A", "B", "C"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        let c = find_by_title(&g, "C").unwrap();
+        g.add_edge(Edge::new(
+            a,
+            b,
+            egui::pos2(0.0, 0.0),
+            egui::pos2(0.0, 0.0),
+            canvas.clone(),
+        ));
+        g.add_edge(Edge::new(
+            b,
+            c,
+            egui::pos2(0.0, 0.0),
+            egui::pos2(0.0, 0.0),
+            canvas.clone(),
+        ));
+        // B 居中：1 跳含 A、B、C。
+        assert_eq!(neighborhood(&g, b, 1), HashSet::from([a, b, c]));
+        // A 在端点：1 跳只含 A、B（C 是 2 跳）。
+        assert_eq!(neighborhood(&g, a, 1), HashSet::from([a, b]));
+    }
+
+    #[test]
+    fn neighborhood_two_hops_reaches_further() {
+        // 链 A - B - C - D：从 A 出发 2 跳含 A、B、C（D 是 3 跳，不含）。
+        let (mut g, canvas) = graph_with(&["A", "B", "C", "D"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        let c = find_by_title(&g, "C").unwrap();
+        let d = find_by_title(&g, "D").unwrap();
+        for (s, t) in [(a, b), (b, c), (c, d)] {
+            g.add_edge(Edge::new(
+                s,
+                t,
+                egui::pos2(0.0, 0.0),
+                egui::pos2(0.0, 0.0),
+                canvas.clone(),
+            ));
+        }
+        assert_eq!(neighborhood(&g, a, 2), HashSet::from([a, b, c]));
+        assert_eq!(neighborhood(&g, a, 3), HashSet::from([a, b, c, d]));
+    }
+
+    #[test]
+    fn neighborhood_direction_agnostic() {
+        // 有向边 A -> B：无向邻域里 B 的 1 跳仍含 A（入边也算邻居）。
+        let (mut g, canvas) = graph_with(&["A", "B"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        g.add_edge(Edge::new(
+            a,
+            b,
+            egui::pos2(0.0, 0.0),
+            egui::pos2(0.0, 0.0),
+            canvas.clone(),
+        ));
+        assert_eq!(neighborhood(&g, b, 1), HashSet::from([a, b]));
+    }
+
+    #[test]
+    fn neighborhood_cycle_no_duplicates_and_terminates() {
+        // 环 A - B - C - A：BFS 经 HashSet 去重，不因环死循环。
+        let (mut g, canvas) = graph_with(&["A", "B", "C"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        let c = find_by_title(&g, "C").unwrap();
+        for (s, t) in [(a, b), (b, c), (c, a)] {
+            g.add_edge(Edge::new(
+                s,
+                t,
+                egui::pos2(0.0, 0.0),
+                egui::pos2(0.0, 0.0),
+                canvas.clone(),
+            ));
+        }
+        // 1 跳从 A：A 的直接邻居是 B、C（经 A-B 与 C-A），全员到齐。
+        assert_eq!(neighborhood(&g, a, 1), HashSet::from([a, b, c]));
+        // 大跳数也不超过整环节点集，且能终止。
+        assert_eq!(neighborhood(&g, a, 10), HashSet::from([a, b, c]));
+    }
+
+    #[test]
+    fn neighborhood_self_loop_is_self() {
+        // 自环 A-A：A 的邻居即自身，邻域 = {A}，不重复也不漏。
+        let (mut g, canvas) = graph_with(&["A", "B"]);
+        let a = find_by_title(&g, "A").unwrap();
+        g.add_edge(Edge::new(
+            a,
+            a,
+            egui::pos2(0.0, 0.0),
+            egui::pos2(0.0, 0.0),
+            canvas.clone(),
+        ));
+        assert_eq!(neighborhood(&g, a, 1), HashSet::from([a]));
+        assert_eq!(neighborhood(&g, a, 2), HashSet::from([a]));
+    }
+
+    #[test]
+    fn neighborhood_stale_center_is_empty() {
+        // 中心已被删（悬空索引）：返回空集、不 panic（§3.3 容错）。
+        let (mut g, _c) = graph_with(&["A"]);
+        let a = find_by_title(&g, "A").unwrap();
+        g.remove_node(a);
+        assert!(neighborhood(&g, a, 1).is_empty());
     }
 
     #[test]
