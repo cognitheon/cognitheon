@@ -2,6 +2,10 @@ on: [push, pull_request, workflow_dispatch]
 
 name: CI
 
+# 默认最小权限：构建/lint job 全部只读；唯一需要写的 release job 自行覆盖为 contents: write
+permissions:
+  contents: read
+
 env:
   RUSTFLAGS: -D warnings
   RUSTDOCFLAGS: -D warnings
@@ -124,18 +128,78 @@ jobs:
       - name: Rename
         run: cp target/${{ matrix.TARGET }}/release/cognitheon${{ matrix.EXTENSION }} cognitheon-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
 
-      - uses: actions/upload-artifact@master
+      # 只负责产出构建产物；发布统一交给下面单例的 release job（避免 3 个 matrix 并行抢建同一 release 的竞态）
+      - uses: actions/upload-artifact@v4
         with:
           name: cognitheon-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
           path: cognitheon-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
 
-      - uses: svenstaro/upload-release-action@v2
-        name: Upload binaries to release
-        if: ${{ github.event_name == 'push' }}
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    # 串行化发布：避免两次相近的 main 推送的 release job 交错删/建同一 nightly（竞态会 422，或 tag 停在旧 commit）
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    # 仅在 push 到 main（滚动 nightly 预发布）或 push 版本 tag vX.Y.Z（正式 release）时发布
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: cognitheon-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
-          asset_name: cognitheon-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
-          tag: ${{ github.ref }}
-          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
-          overwrite: true
+          path: artifacts
+          # merge-multiple 把各 artifact 扁平进同一目录；这里安全的前提是每个产物 basename 内嵌唯一的
+          # matrix.TARGET（见上面的 Rename），同名 basename 会被后者静默覆盖且 fail_on_unmatched_files 检测不到
+          merge-multiple: true
+
+      # 按触发来源决定发布元数据：严格 semver tag → 正式 release；main 推送 → 固定 nightly 预发布（不与分支同名）；
+      # 其余（vtest/valpha 等非 semver 的 v* tag）→ publish=false，既不出正式 release 也不污染 nightly
+      - name: Compute release metadata
+        id: meta
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            echo "tag=nightly" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # nightly 是滚动发布：先删旧 release 连同其 tag，再由下一步在当前 commit 重建，保证 tag 随 main 前进。
+      # 只容忍 "release not found"（首次运行尚无 nightly）；其余错误（401/403 权限退化、429 限流、5xx/网络）必须让 job 失败，
+      # 否则旧 tag 不会被删，softprops 只更新现有 release 但不移动 git tag，滚动语义被静默破坏
+      - name: Refresh rolling nightly release
+        if: steps.meta.outputs.publish == 'true' && steps.meta.outputs.tag == 'nightly'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! err=$(gh release delete nightly --cleanup-tag --yes --repo "${GITHUB_REPOSITORY}" 2>&1); then
+            if printf '%s' "$err" | grep -qiE 'release not found|HTTP 404'; then
+              echo "No existing nightly release; nothing to delete."
+            else
+              echo "$err" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Publish release
+        if: steps.meta.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          target_commitish: ${{ github.sha }}
+          files: artifacts/*
+          fail_on_unmatched_files: true
