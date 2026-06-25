@@ -26,6 +26,8 @@
 //!   orphans                     列出孤立节点（无任何边连接），返回 `orphan <index> <title>` + `ok count <n>`
 //!   export-md <index>           打印某节点的 Markdown（frontmatter + note 原样，Obsidian 兼容）
 //!   export-md                   （无参）打印整个 vault 的导出文件名清单 + 手画边旁路记录数
+//!   import-md-add <name> <body> 把一篇 .md（或手画边旁路 json）累加进待导入批次（body 支持 `\n`）
+//!   import-md-run               把批次导入既有图（先全建点再 resolve、连手画边），打印计数后清空
 //!   reset                       清空
 //!   help                        打印命令
 //!   quit | exit                 退出
@@ -43,6 +45,9 @@ use petgraph::graph::NodeIndex;
 struct Session {
     graph: Graph,
     canvas: CanvasStateResource,
+    /// 待导入的 Markdown 批次（`import-md-add` 累加、`import-md-run` 经统一流水线一次性导入）。
+    /// 分两步是为了在无头下验证「先全建点再 resolve」的顺序铁律（多文件同名目标不重复建点）。
+    md_batch: Vec<(String, String)>,
 }
 
 impl Session {
@@ -50,6 +55,7 @@ impl Session {
         Self {
             graph: Graph::default(),
             canvas: CanvasStateResource::new(CanvasState::default()),
+            md_batch: Vec::new(),
         }
     }
 }
@@ -86,7 +92,7 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
                 "commands: new <x> <y> [title] | title <i> <t> | body <i> <b> | alias <i> <names> | get <i>",
                 "          rm <i> | count | dump | save <path> | load <path> | reset | quit",
                 "          link <i> <j> | parse <i> | backlinks <i> | search <q> | find <title> | orphans",
-                "          export-md [<i>]",
+                "          export-md [<i>] | import-md-add <name> <body> | import-md-run",
             ]
             .iter()
             .map(|s| s.to_string())
@@ -363,6 +369,42 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
                 lines.push(format!("ok bytes {}", md.len()));
                 Ok(Some(lines))
             }
+        }
+
+        // import-md-add <filename> <content...>：把一篇 .md（或手画边旁路 json）累加进待导入批次。
+        // content 里的字面量 `\n` 还原成换行（与 body 同口径），便于一行传多行 frontmatter+正文。
+        "import-md-add" => {
+            let mut it = rest.splitn(2, ' ');
+            let filename = it.next().unwrap_or("").trim();
+            if filename.is_empty() {
+                return Err("usage: import-md-add <filename> <content...>".into());
+            }
+            let content = unescape(it.next().unwrap_or(""));
+            s.md_batch.push((filename.to_owned(), content));
+            Ok(Some(vec![format!("ok batch {}", s.md_batch.len())]))
+        }
+
+        // import-md-run：把累加的批次经统一流水线（markdown::import_markdown_batch）导入既有图——
+        // 先全建点再 resolve（顺序铁律）、连手画边旁路。随后清空批次。打印各项计数供脚本断言。
+        // 与 app.rs 同口径：导入后 id 计数器自然由 new_*_id 推进，这里额外不再替换图（追加语义）。
+        "import-md-run" => {
+            if s.md_batch.is_empty() {
+                // 空批次无操作（与 app.rs 不打空撤销项同口径）。
+                return Ok(Some(vec!["ok empty".into()]));
+            }
+            let batch = std::mem::take(&mut s.md_batch);
+            // append 语义（必修项 2）：纯追加、不替换图；renamed_collisions 报本批与既有同名的节点数
+            // （供脚本断言"导入进非空图静默翻倍"已变为可观测告警计数）。
+            let out = markdown::import_markdown_batch(&mut s.graph, &s.canvas, &batch);
+            Ok(Some(vec![format!(
+                "ok imported {} resolved_nodes {} resolved_edges {} manual_edges {} placeheld {} collisions {}",
+                out.imported_nodes,
+                out.resolved_new_nodes,
+                out.resolved_edges,
+                out.manual_edges,
+                out.placeheld_positions,
+                out.renamed_collisions
+            )]))
         }
 
         other => Err(format!("unknown command: {other}")),

@@ -907,6 +907,118 @@ impl CognitheonApp {
         log::info!("vault export triggered: {} files", files.len());
     }
 
+    /// **从 Markdown 导入**：把一批 `(文件名, 字节)` 追加进**既有图**（[[链接]] 经 resolve 投影成边、
+    /// 缺失目标自动建、手画边旁路按端点标题回连），整批为**一个撤销单元**（Ctrl+Z 整体回退）。
+    ///
+    /// 与 Load（[`Self::replace_document`] 替换整图）刻意不同：导入是**追加（append）**，故经
+    /// `history.mutate`（写闭包外先克隆 before 压 undo，§3.1）包裹核心流水线
+    /// [`crate::markdown::import_markdown_batch`]，而非替换资源 `Arc`。**导入永远新增节点、绝不合并/
+    /// 覆盖既有同名节点**（迁入外部 vault 语义）；"导出→编辑→再导入"的往返靠先 File→New 清空再导入
+    /// （空图导入无重名、无重复）。
+    ///
+    /// 顺序与不变量：
+    /// - **空批次无操作、不打空撤销项**：批内全是无效字节（非 UTF-8）→ 解析为空批次时直接返回。
+    /// - **id 计数器推 max+1**（复刻 [`crate::persistence::Document::into_parts`] 范式）：导入节点 / 边
+    ///   的 id 在流水线内已由 `new_node_id()` / `new_edge_id()` 顺序分配，这里再把计数器抬到现有
+    ///   max+1 兜底，杜绝后续 `new_*_id()` 与任何已加载 id 撞车。
+    /// - **仅导入进【空图】且有占位节点时才整图布局（必修项 1）**：导入是 append 语义、**非破坏**。
+    ///   只有导入前图为空（典型"导入一个 vault 到新文档"）且批内有节点用了螺旋占位坐标
+    ///   （frontmatter 无 position）时，才对**整图**跑一次力导向布局 + `zoom_to_fit` 让图自然铺开。
+    ///   **导入进既有图则绝不重排**——既有手摆好 / 带 frontmatter 坐标的节点位置**纹丝不动**，本批
+    ///   新节点各自用确定性螺旋占位坐标（彼此不重合），不触发整图 `layout_graph`（它会重写**全部**
+    ///   节点位置，冲掉既有摆位，违反"追加进既有图、非破坏"契约）。布局（仅空图分支）并入同一撤销
+    ///   单元（`mutate` 闭包内执行）。
+    /// - **append 重名告警（必修项 2）**：若本批导入节点的标题在导入前已存在于图中
+    ///   （[`crate::markdown::ImportOutcome::renamed_collisions`]>0），`log::warn` 提示已作为新节点追加、
+    ///   未合并；如需还原 vault 请先 New 清空再导入。
+    ///
+    /// 调用时机（§3.3）：在 [`eframe::App::ui`] 顶部、画布 CentralPanel 渲染**之前**消费总线并导入，
+    /// 故本帧几何按导入后的新图重写，无悬空索引窗口（与 `replace_document` 同口径）。
+    fn import_markdown_files(&mut self, ctx: &egui::Context, files: Vec<(String, Vec<u8>)>) {
+        // 字节 → UTF-8 文本（.md / 旁路 json 都是 UTF-8）。非 UTF-8 文件仅记日志、跳过（坏文件不中断整批）。
+        let decoded: Vec<(String, String)> = files
+            .into_iter()
+            .filter_map(|(name, bytes)| match String::from_utf8(bytes) {
+                Ok(text) => Some((name, text)),
+                Err(_) => {
+                    log::warn!("import: file {name:?} is not valid UTF-8, skipped");
+                    None
+                }
+            })
+            .collect();
+        if decoded.is_empty() {
+            log::info!("import: empty batch, nothing to do");
+            return;
+        }
+
+        // 必修项 1：导入是 append、非破坏。导入**前**记录图是否为空——只有"导入进空图"才允许之后
+        // 对整图跑力导向布局（导入一个 vault 到新文档需自动铺开）；非空图导入绝不重排既有节点。
+        let was_empty = self
+            .graph_resource
+            .read_resource(|g| g.graph.node_count() == 0);
+
+        // 整批为一个撤销单元：history.mutate 在写闭包外先克隆 before 压栈（§3.1），闭包内跑导入
+        // 流水线（先全建点 → resolve → 连手画边）+ （仅空图时）力导向布局 + id 计数器推 max+1。
+        let canvas = self.canvas_resource.clone();
+        let outcome = self.history.mutate(&self.graph_resource, |g| {
+            let outcome = crate::markdown::import_markdown_batch(g, &canvas, &decoded);
+
+            // 必修项 1：仅当导入进【空图】且有占位节点时才对**整图**跑力导向布局（让导入的 vault 自然
+            // 铺开）。导入进既有图则跳过——layout_graph 会重写全部节点位置、冲掉既有手摆/带坐标节点，
+            // 违反"追加非破坏"契约；本批新节点已由螺旋占位坐标确定性散布、彼此不重合，无需整图重排。
+            if was_empty && outcome.placeheld_positions > 0 {
+                let affected = layout::layout_graph(g, LayoutParams::default());
+                log::info!(
+                    "import: empty-graph import with {} placeheld positions → ran force-directed layout on {affected} nodes",
+                    outcome.placeheld_positions
+                );
+            }
+
+            // id 计数器推 max+1（复刻 persistence into_parts 范式）：杜绝后续 new_*_id 撞已加载 id。
+            canvas.with_resource(|cs| {
+                use std::sync::atomic::Ordering;
+                if let Some(max_id) = g.graph.node_weights().map(|n| n.id).max() {
+                    let next = max_id.saturating_add(1);
+                    if cs.global_node_id.load(Ordering::Relaxed) < next {
+                        cs.global_node_id.store(next, Ordering::Relaxed);
+                    }
+                }
+                if let Some(max_id) = g.graph.edge_weights().map(|e| e.id).max() {
+                    let next = max_id.saturating_add(1);
+                    if cs.global_edge_id.load(Ordering::Relaxed) < next {
+                        cs.global_edge_id.store(next, Ordering::Relaxed);
+                    }
+                }
+            });
+
+            outcome
+        });
+
+        log::info!(
+            "imported {} md files: {} nodes, +{} resolved nodes, {} wiki edges, {} manual edges",
+            decoded.len(),
+            outcome.imported_nodes,
+            outcome.resolved_new_nodes,
+            outcome.resolved_edges,
+            outcome.manual_edges,
+        );
+
+        // append 重名告警（必修项 2）：本批有节点标题与导入前既有节点同名 → 显式提示已作为新节点
+        // 追加、未合并，消除"静默翻倍"。还原 vault 的正确姿势是先 File→New 清空再导入（空图无重名）。
+        if outcome.renamed_collisions > 0 {
+            log::warn!(
+                "import: {} imported node(s) share a title with existing nodes — appended as NEW nodes, NOT merged. To restore a vault cleanly, use File→New first, then import.",
+                outcome.renamed_collisions
+            );
+        }
+
+        // 缩放/平移到能看见全部节点（zoom-to-fit），仅在"空图导入并跑了布局"时——既能看全新铺开的
+        // vault，又避免导入进既有图时无谓改视图（既有节点位置不动，视图也不该跳）。
+        if was_empty && outcome.placeheld_positions > 0 {
+            self.zoom_to_fit(ctx);
+        }
+    }
+
     /// 选中并把画布聚焦（居中）到某节点。
     fn focus_node(&self, ctx: &egui::Context, idx: petgraph::graph::NodeIndex) {
         let pos = self.graph_resource.with_resource(|g| {
@@ -1310,6 +1422,13 @@ impl eframe::App for CognitheonApp {
         if let Some(bytes) = crate::io::take_loaded_bytes(&ctx) {
             self.replace_document(&bytes);
         }
+
+        // 从 Markdown 导入异步读出的一批文件：同样在画布渲染**之前**一次性消费（多文件总线，native
+        // 同帧 / wasm 多 FileReader 凑齐整批后跨帧写入；take 取走即清，一批只导入一次）。导入是**追加**
+        // 进既有图（区别于上面 .cnt 的整图替换），整批经 history.mutate 成一个撤销单元（见 import_markdown_files）。
+        if let Some(files) = crate::io::take_loaded_md_files(&ctx) {
+            self.import_markdown_files(&ctx, files);
+        }
         // println!(
         //     "update: {:?}",
         //     self.graph_resource.0.read().unwrap().graph.node_count()
@@ -1518,6 +1637,24 @@ impl eframe::App for CognitheonApp {
                     {
                         ui.close();
                         self.export_vault();
+                    }
+
+                    // 从 Markdown 导入（vault）：多选 .md（+ 可选手画边旁路 json）追加进既有图，
+                    // [[链接]] 经 resolve 自动连边、缺失目标自动建。native 多选文件对话框 / wasm 多文件
+                    // 上传（FileReader 凑齐整批），下一帧由 take_loaded_md_files 消费 → import_markdown_files。
+                    if ui
+                        .button("从 Markdown 导入")
+                        .on_hover_text(
+                            "选一组 .md（Obsidian vault）追加进当前图：\
+                             文件名→标题、正文→笔记，[[链接]] 自动连边。",
+                        )
+                        .clicked()
+                    {
+                        ui.close();
+                        #[cfg(not(target_arch = "wasm32"))]
+                        crate::io::request_open_markdown_files(&ctx, &self.runtime);
+                        #[cfg(target_arch = "wasm32")]
+                        crate::io::request_open_markdown_files(&ctx);
                     }
 
                     // Quit 仅 native 有意义（关闭桌面窗口）；wasm 是浏览器标签页，无此动作。

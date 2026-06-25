@@ -27,6 +27,7 @@
 use crate::graph::edge::EdgeOrigin;
 use crate::graph::graph_impl::Graph;
 use crate::graph::node::Node;
+use crate::resource::CanvasStateResource;
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 
 /// 手画边旁路文件名（与 .md 同目录 / 同 zip）。下划线前缀 + 明确命名，避免与任何用户节点
@@ -196,6 +197,370 @@ pub fn yaml_quote(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+// ============================ Markdown → 单节点（导入侧，纯函数） ============================
+
+/// 解析一个 YAML flow 序列 `[...]` 的内部（不含中括号）成元素列表。
+///
+/// 与 [`node_to_markdown`] 写出的 aliases 形态**严格往返**（它是 #18 导出的逆运算）。按 YAML 双引号
+/// 字符串规则做状态机扫描，正确处理含逗号 / 转义的引号化元素（裸 `, ` 硬切会切错 `"a, b"` 这类值）：
+/// - 引号外的 `,` 才是元素分隔符；引号内的 `,` 属于值的一部分；
+/// - 引号内 `\"` / `\\` / `\n` / `\t` / `\r` 按 [`yaml_quote`] 的转义反向还原；
+/// - 裸词（未引号化）元素 trim 两端空白后原样取用。
+///
+/// 只覆盖 [`node_to_markdown`] 实际会写出的两种形态（裸词 / 双引号），不是通用 YAML 解析器。
+fn parse_flow_seq(inner: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let mut chars = inner.chars().peekable();
+    loop {
+        // 跳过元素前的空白。
+        while matches!(chars.peek(), Some(c) if c.is_whitespace()) {
+            chars.next();
+        }
+        match chars.peek() {
+            None => break,
+            Some('"') => {
+                // 双引号字符串：扫到配对的未转义 `"`，按转义还原。
+                chars.next(); // 吃掉开引号
+                let mut s = String::new();
+                while let Some(c) = chars.next() {
+                    match c {
+                        '"' => break,
+                        '\\' => match chars.next() {
+                            Some('\\') => s.push('\\'),
+                            Some('"') => s.push('"'),
+                            Some('n') => s.push('\n'),
+                            Some('t') => s.push('\t'),
+                            Some('r') => s.push('\r'),
+                            Some(other) => {
+                                s.push('\\');
+                                s.push(other);
+                            }
+                            None => s.push('\\'),
+                        },
+                        other => s.push(other),
+                    }
+                }
+                items.push(s);
+                // 吃掉到下一个 `,` 为止的空白与分隔符。
+                while matches!(chars.peek(), Some(c) if c.is_whitespace()) {
+                    chars.next();
+                }
+                if matches!(chars.peek(), Some(',')) {
+                    chars.next();
+                }
+            }
+            Some(_) => {
+                // 裸词：扫到引号外的 `,` 或串尾。
+                let mut raw = String::new();
+                while let Some(&c) = chars.peek() {
+                    if c == ',' {
+                        break;
+                    }
+                    raw.push(c);
+                    chars.next();
+                }
+                items.push(raw.trim().to_owned());
+                if matches!(chars.peek(), Some(',')) {
+                    chars.next();
+                }
+            }
+        }
+    }
+    items
+}
+
+/// 从 [`node_to_markdown`] 输出里恢复的 frontmatter 元数据（id 解析出来但**导入侧不复用**，见
+/// [`markdown_to_node`]）。
+#[derive(Debug, Default, PartialEq)]
+pub struct Frontmatter {
+    /// frontmatter 里的 `position: [x, y]`（画布坐标，§3.2）。无 `---` 块 / 无该行 → `None`。
+    pub position: Option<egui::Pos2>,
+    /// frontmatter 里的 `aliases: [...]`（经 [`parse_flow_seq`] 还原引号化 / 含逗号元素）。
+    pub aliases: Vec<String>,
+}
+
+/// 把一篇 `.md` 文本拆成 `(frontmatter, body)`：识别 #18 [`node_to_markdown`] 写出的 `---` 包裹
+/// frontmatter，解析 `position` / `aliases`，其余即正文 body。**与导出严格往返**。
+///
+/// **CRLF 容错（必修项 3）**：真实 Obsidian vault / Windows / `git autocrlf` 来源的 `.md` 用
+/// `---\r\n…---\r\n` 行尾。本函数对 frontmatter 区**只识别边界、不改字节**：开闭围栏同时容忍
+/// `---\n` 与 `---\r\n`，闭合围栏前的 `\r` 一并吞掉；frontmatter 内的字段行经 [`str::lines`]
+/// 解析（它已自动剥除行尾 `\r`，故 `position` / `aliases` 在 CRLF 下也正确解析）。**正文 body 仍逐
+/// 字节原样**（不做任何行尾归一，note = SSOT，§7）——只在边界检测处兼容 CRLF，不触碰 body 内容。
+///
+/// 容错（AGENTS.md §7：来源原样、坏档不中断）：
+/// - **无 frontmatter**（外部 Obsidian `.md`，或正文恰好以 `---` 开头但无闭合）→ `Frontmatter::default()`
+///   + body = 整个 `content`（不丢正文）。
+/// - **坏 frontmatter**（`position` / `aliases` 行格式不符）→ 该字段静默落默认值，**绝不 panic**
+///   （`position` 解析失败回退 `None` 让调用方用占位坐标，`aliases` 解析失败回退空）。
+///
+/// body 不做任何 trim / 归一（note = SSOT，导入也原样保留紧跟 frontmatter 后那一个空行之后的全部内容）。
+pub fn parse_frontmatter(content: &str) -> (Frontmatter, String) {
+    // frontmatter 必须以 `---` 单独成行起头、并有闭合的 `---` 单独成行（与 node_to_markdown 的
+    // `---\n…---\n\n` 对称）。**同时容忍 LF（`---\n`）与 CRLF（`---\r\n`）行尾**（必修项 3：真实
+    // Obsidian / Windows / git autocrlf 来源是 CRLF），任一不满足 → 无 frontmatter、整段当正文。
+    let rest = if let Some(r) = content.strip_prefix("---\r\n") {
+        r
+    } else if let Some(r) = content.strip_prefix("---\n") {
+        r
+    } else {
+        return (Frontmatter::default(), content.to_owned());
+    };
+    // 闭合围栏 `\n---\n`：先找 `\n---\n`，命中后把围栏前可能存在的一个 `\r` 算进 frontmatter 区
+    // （CRLF 下闭合行是 `…\r\n---\r\n`，`find("\n---\n")` 会落在 `---` 前的 `\r\n` 的 `\n` 上，
+    // 围栏后那行 `---` 的尾随 `\r` 由 strip 区的 body 起始空行剥除处理）。
+    let Some(end) = rest.find("\n---\n").or_else(|| rest.find("\n---\r\n")) else {
+        // 有起始 `---` 但无闭合：当作纯正文（不把半截 frontmatter 吞掉）。
+        return (Frontmatter::default(), content.to_owned());
+    };
+    // fm_block 截到闭合围栏前的 `\n`（含 CRLF 时该 `\n` 前的 `\r` 留在 block 末尾，由 `.lines()`
+    // 解析字段时自动剥除，不影响解析）。
+    let fm_block = &rest[..end];
+    // 跳过闭合围栏本身：可能是 `\n---\n` 或 `\n---\r\n`，按实际命中的长度推进。
+    let after_fence = &rest[end..];
+    let body = if let Some(b) = after_fence.strip_prefix("\n---\r\n") {
+        b
+    } else {
+        &after_fence["\n---\n".len()..]
+    };
+    // 去掉 frontmatter 与正文之间那**一个**空行（node_to_markdown 写的是 `---\n\n<note>`；CRLF
+    // 来源是 `---\r\n\r\n<note>`，故同时剥 `\r\n` 与 `\n`）。仅剥这一个空行的行尾，body 其余原样。
+    let body = body
+        .strip_prefix("\r\n")
+        .or_else(|| body.strip_prefix('\n'))
+        .unwrap_or(body);
+
+    let mut fm = Frontmatter::default();
+    for raw_line in fm_block.lines() {
+        // CRLF 容错（必修项 3）：`fm_block` 的**最后一行**可能尾带一个 `\r`（闭合围栏是 `\r\n---…`
+        // 时该 `\r` 落在 block 末尾、不被 `.lines()` 剥除）。逐行去尾随 `\r` 再解析，使 CRLF 来源的
+        // `position` / `aliases` 行的 `]` 仍能被 `strip_suffix` 命中——只归一 frontmatter 区行尾、不动正文。
+        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        if let Some(v) = line.strip_prefix("position: [") {
+            // `position: [x, y]` → 解析两数；任一坏掉则整体落 None（坏档容错、不 panic）。
+            if let Some(inner) = v.strip_suffix(']') {
+                let mut it = inner.split(',').map(str::trim);
+                if let (Some(xs), Some(ys), None) = (it.next(), it.next(), it.next()) {
+                    if let (Ok(x), Ok(y)) = (xs.parse::<f32>(), ys.parse::<f32>()) {
+                        // 非有限值（NaN/Inf）视为无效坐标，回退占位（与 fmt_num 写出口径对称）。
+                        if x.is_finite() && y.is_finite() {
+                            fm.position = Some(egui::pos2(x, y));
+                        }
+                    }
+                }
+            }
+        } else if let Some(v) = line.strip_prefix("aliases: [") {
+            if let Some(inner) = v.strip_suffix(']') {
+                fm.aliases = parse_flow_seq(inner);
+            }
+        }
+        // id 行被刻意忽略：导入进既有图时 frontmatter id 可能与现有节点撞，统一由调用方重分配。
+    }
+    (fm, body.to_owned())
+}
+
+/// 把一篇 `.md`（文件名 + 正文）解析成一个 [`Node`]（**纯函数、零 IO、不进图**）。导入流水线的原子步。
+///
+/// 与 #18 [`node_to_markdown`] 严格往返（**链接保真**而非标题字节保真，见下）：
+/// - **`Node.text` = 文件名去 `.md`**：#18 把 `text` 写进文件名；若标题被 `sanitize_filename` 改名，
+///   #18 已把原 `text` 注入 frontmatter 的 aliases，故导入后 `[[原标题]]` 经别名仍可寻址
+///   （[`crate::wikilink::find_by_title`] text 优先、alias 次之）。
+/// - **`Node.note` = 正文 body**（[`parse_frontmatter`] 拆出，原样不改写，SSOT §7）。
+/// - **id 不复用 frontmatter 的**：导入进既有图，frontmatter id 可能与现有节点撞——由调用方经
+///   `canvas.new_node_id()` 重分配后传入 `id`。
+/// - **position**：优先 frontmatter；缺失（外部 md / 坏档）则用调用方给的占位 `fallback_pos`（螺旋散布）。
+/// - **aliases**：直接取自 frontmatter（含 #18 改名时注入的原标题），保住链接句柄。
+///
+/// `filename` 可含或不含 `.md` 扩展（统一 strip）；可含路径前缀（取 `file_name` 末段，防把目录当标题）。
+pub fn markdown_to_node(filename: &str, content: &str, id: u64, fallback_pos: egui::Pos2) -> Node {
+    let (fm, body) = parse_frontmatter(content);
+    Node {
+        id,
+        position: fm.position.unwrap_or(fallback_pos),
+        text: filename_to_title(filename),
+        note: body,
+        aliases: fm.aliases,
+    }
+}
+
+/// 把上传的文件名转成节点标题：取末段（去掉任何 `/` `\` 路径前缀，防把目录名拼进标题）后去 `.md`
+/// 扩展（大小写不敏感）。与 [`sanitize_filename`] + [`unique_md_filename`] 的导出文件名命名往返
+/// （去重后缀 `-2` 等会留在标题里——往返是链接保真而非标题字节保真，见 [`markdown_to_node`]）。
+fn filename_to_title(filename: &str) -> String {
+    // 取末段：兼容用户上传时可能带的相对路径（vault 子目录），只要文件名本身。
+    let stem = filename
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(filename)
+        .trim();
+    // 去 `.md`（大小写不敏感）。其它扩展（理论上不该出现）原样保留为标题。
+    if stem.len() >= 3 && stem[stem.len() - 3..].eq_ignore_ascii_case(".md") {
+        stem[..stem.len() - 3].to_owned()
+    } else {
+        stem.to_owned()
+    }
+}
+
+// ============================ 一批 .md → 图（导入流水线，顺序敏感） ============================
+
+/// 螺旋占位坐标生成器：为 frontmatter 缺坐标的导入节点（外部 Obsidian `.md`）给一个确定性散布点，
+/// 避免它们全叠在原点。`i` 是该批次内"缺坐标节点"的序号（从 0 起）。
+///
+/// 用阿基米德螺旋 `r = step * sqrt(i)`、角度黄金角错开，铺成不重叠的盘状散布（坐标缺失时调用方
+/// 还会整批跑一次力导向布局，故这里只需"不重合"即可，无需美观）。
+fn spiral_placeholder(i: usize) -> egui::Pos2 {
+    const STEP: f32 = 60.0;
+    const GOLDEN_ANGLE: f32 = 2.399_963_2; // ~137.5°，黄金角（弧度）
+    let r = STEP * (i as f32).sqrt();
+    let theta = i as f32 * GOLDEN_ANGLE;
+    egui::pos2(r * theta.cos(), r * theta.sin())
+}
+
+/// 一批 `.md` 导入的结果统计（供 UI / headless / 日志取证）。
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ImportOutcome {
+    /// 本批真正建出的节点数（每个 `.md` 一个；不含 resolve 为缺失 `[[链接]]` 目标新建的节点）。
+    pub imported_nodes: usize,
+    /// resolve 阶段为"正文里 `[[链接]]` 但批内/图中无此标题"自动新建的节点数。
+    pub resolved_new_nodes: usize,
+    /// resolve 阶段新建的 wiki 边数。
+    pub resolved_edges: usize,
+    /// 从手画边旁路 JSON 成功连上的 Manual 边数。
+    pub manual_edges: usize,
+    /// 因 frontmatter 缺 `position` 而用螺旋占位坐标的节点数（>0 且导入进**空图**时调用方应跑
+    /// 一次力导向布局；导入进非空图则不重排，见 [`crate::app::CognitheonApp`] 的 import 文档）。
+    pub placeheld_positions: usize,
+    /// **append 语义告警计数（必修项 2）**：本批导入的 `.md` 节点里，其标题（`Node.text`）在导入**前**
+    /// 已存在于图中的个数。导入是**迁入外部 vault** 语义——永远**新增节点、绝不合并/覆盖**既有同名节点
+    /// （覆盖既有 note/position 对"迁入外部库"不合适）。该计数 >0 时调用方应 `log::warn` 提示：这些
+    /// 节点已作为新节点追加、未合并；如需还原 vault 请先 File→New 清空再导入（空图导入无重名、无重复）。
+    pub renamed_collisions: usize,
+}
+
+/// 把一批 `(filename, content)` 导入**既有图**（顺序敏感的核心流水线，纯图操作、零 IO）。
+///
+/// **append 语义（必修项 2，已定）**：导入 = **迁入外部 vault**——每个 `.md` 永远 `add_node` 成
+/// **新节点**，**绝不**与既有同名节点对账、合并或覆盖（覆盖既有节点的 note/position 是另一种破坏，
+/// 对"迁入外部库"不合适）。"导出→编辑→再导入"的往返靠**先 File→New 清空再导入**（空图导入无重名、
+/// 无重复）。为消除"静默翻倍"，本函数统计本批与既有同名的节点数（[`ImportOutcome::renamed_collisions`]），
+/// 由调用方告警提示用户。
+///
+/// **导入顺序铁律（AGENTS.md §3.3，防重复建点）**：必须**先把所有 `.md` 都 `add_node`**（拿到
+/// `NodeIndex`），**再**对每个新节点跑 [`crate::wikilink::resolve_links`]。否则先 resolve 的节点会
+/// 为"尚未导入的同名目标"新建重复节点（重名歧义放大）——先全建点让同批的 `[[标题]]` 能经
+/// `find_by_title` 命中本批刚建的节点而非另起炉灶。
+///
+/// 流程：
+/// 1. **过滤旁路**：从批次里分出手画边旁路 [`MANUAL_EDGES_FILENAME`]（按文件名识别），其余按 `.md` 处理。
+/// 2. **先全建点**：每个 `.md` 经 [`markdown_to_node`] 建节点（id 由 `canvas.new_node_id()` 重分配，
+///    position 优先 frontmatter、缺失用螺旋占位并计数）。
+/// 3. **再逐个 resolve**：对**本批新建**的每个节点跑 `resolve_links`，把正文 `[[标题]]` 幂等投影成
+///    wiki 边（缺失目标自动建，与手动编辑正文同一路径）。
+/// 4. **连手画边旁路**：按端点 `Node.text`（经 `find_by_title`）连 [`EdgeOrigin::Manual`] 边；端点
+///    寻址不到则 `log::warn` 跳过（坏旁路不中断整批）。
+///
+/// 容错：坏 frontmatter 由 [`parse_frontmatter`] 兜底（当纯正文）；坏旁路 JSON 解析失败 `log::warn`
+/// 跳过（不中断 .md 导入）。本函数**只改图**——`history.mutate` 包裹 / 坐标缺失后的力导向布局 /
+/// id 计数器推 max+1 由调用方（[`crate::app`] / headless）负责，使整批成一个撤销单元（§3.1）。
+pub fn import_markdown_batch(
+    graph: &mut Graph,
+    canvas: &CanvasStateResource,
+    files: &[(String, String)],
+) -> ImportOutcome {
+    use crate::graph::edge::Edge;
+    use crate::wikilink::{find_by_title, resolve_links};
+
+    let mut outcome = ImportOutcome::default();
+
+    // append 语义对账（必修项 2）：导入**前**快照既有节点标题集，供后面判定本批新节点是否与既有
+    // 同名（同名只统计告警、**仍作为新节点追加**，绝不合并/覆盖）。空标题不入集——它不是
+    // find_by_title 的可寻址句柄，不参与重名判定（与 collect_manual_edges 跳过空标题同口径）。
+    let preexisting_titles: std::collections::HashSet<String> = graph
+        .graph
+        .node_weights()
+        .map(|n| n.text.clone())
+        .filter(|t| !t.is_empty())
+        .collect();
+
+    // 1. 分离手画边旁路（按确定文件名识别，取末段比较以兼容带路径上传）与 .md。
+    let mut md_files: Vec<&(String, String)> = Vec::new();
+    let mut manual_sidecars: Vec<&str> = Vec::new();
+    for f in files {
+        let name = f.0.rsplit(['/', '\\']).next().unwrap_or(&f.0);
+        if name == MANUAL_EDGES_FILENAME {
+            manual_sidecars.push(&f.1);
+        } else {
+            md_files.push(f);
+        }
+    }
+
+    // 2. 先全建点（顺序铁律：拿到全部 NodeIndex 后再 resolve）。
+    let mut new_nodes: Vec<petgraph::graph::NodeIndex> = Vec::with_capacity(md_files.len());
+    for (filename, content) in &md_files {
+        let id = canvas.read_resource(|c| c.new_node_id());
+        // 解析一次 frontmatter，按"有无 position"决定坐标来源：有则用 frontmatter，无则用螺旋占位
+        // （按"缺坐标节点序号"递增，占位点彼此不重合）并计数，供调用方据 placeheld_positions>0 跑布局。
+        let (fm, body) = parse_frontmatter(content);
+        let position = match fm.position {
+            Some(p) => p,
+            None => {
+                let p = spiral_placeholder(outcome.placeheld_positions);
+                outcome.placeheld_positions += 1;
+                p
+            }
+        };
+        let title = filename_to_title(filename);
+        // append 语义对账：标题在导入前已存在 → 计数告警（仍作为新节点追加，不合并）。
+        if !title.is_empty() && preexisting_titles.contains(&title) {
+            outcome.renamed_collisions += 1;
+        }
+        let idx = graph.add_node(Node {
+            id,
+            position,
+            text: title,
+            note: body,
+            aliases: fm.aliases,
+        });
+        new_nodes.push(idx);
+        outcome.imported_nodes += 1;
+    }
+
+    // 3. 再逐个 resolve（先全建点之后，本批同名目标已可被 find_by_title 命中、不会重复建）。
+    for &idx in &new_nodes {
+        let res = resolve_links(graph, canvas, idx);
+        outcome.resolved_new_nodes += res.created_nodes.len();
+        outcome.resolved_edges += res.created_edges;
+    }
+
+    // 4. 连手画边旁路：按端点标题（find_by_title）连 Manual 边。坏 JSON / 寻址不到 → warn 跳过。
+    for json in &manual_sidecars {
+        match serde_json::from_str::<Vec<ManualEdgeRef>>(json) {
+            Ok(refs) => {
+                for r in refs {
+                    let src = find_by_title(graph, &r.source_title);
+                    let dst = find_by_title(graph, &r.target_title);
+                    match (src, dst) {
+                        (Some(s), Some(t)) => {
+                            let sp = graph.get_node(s).map(|n| n.position).unwrap_or_default();
+                            let tp = graph.get_node(t).map(|n| n.position).unwrap_or_default();
+                            graph.add_edge(Edge::new(s, t, sp, tp, canvas.clone()));
+                            outcome.manual_edges += 1;
+                        }
+                        _ => log::warn!(
+                            "import: manual edge endpoint not found (source={:?}, target={:?}), skipped",
+                            r.source_title,
+                            r.target_title
+                        ),
+                    }
+                }
+            }
+            Err(e) => log::warn!("import: manual edges sidecar parse failed: {e} (skipped)"),
+        }
+    }
+
+    outcome
 }
 
 // ============================ 文件名 sanitize + 去重 ============================
@@ -664,79 +1029,10 @@ mod tests {
 
     // ---- 单节点往返保真（解析 frontmatter + body） ----
 
-    /// 解析一个 YAML flow 序列 `[...]` 的内部（不含中括号）成元素列表（**测试用**）。
-    ///
-    /// 必修项 4：旧实现以裸 `, ` 硬切，遇到含逗号的引号化元素（`"a, b"` 或注入了 `: # ,` 的原标题
-    /// 别名）会切错、削弱往返保真测试的可信度。这里按 YAML 双引号字符串规则正确地状态机扫描：
-    /// - 引号外的 `,` 才是元素分隔符；引号内的 `,` 属于值的一部分；
-    /// - 引号内 `\"` / `\\` / `\n` / `\t` / `\r` 按 [`yaml_quote`] 的转义反向还原；
-    /// - 裸词（未引号化）元素 trim 两端空白后原样取用。
-    ///
-    /// 只覆盖 [`node_to_markdown`] 实际会写出的两种形态（裸词 / 双引号），不是通用 YAML 解析器。
-    fn parse_flow_seq(inner: &str) -> Vec<String> {
-        let mut items = Vec::new();
-        let mut chars = inner.chars().peekable();
-        loop {
-            // 跳过元素前的空白。
-            while matches!(chars.peek(), Some(c) if c.is_whitespace()) {
-                chars.next();
-            }
-            match chars.peek() {
-                None => break,
-                Some('"') => {
-                    // 双引号字符串：扫到配对的未转义 `"`，按转义还原。
-                    chars.next(); // 吃掉开引号
-                    let mut s = String::new();
-                    while let Some(c) = chars.next() {
-                        match c {
-                            '"' => break,
-                            '\\' => match chars.next() {
-                                Some('\\') => s.push('\\'),
-                                Some('"') => s.push('"'),
-                                Some('n') => s.push('\n'),
-                                Some('t') => s.push('\t'),
-                                Some('r') => s.push('\r'),
-                                Some(other) => {
-                                    s.push('\\');
-                                    s.push(other);
-                                }
-                                None => s.push('\\'),
-                            },
-                            other => s.push(other),
-                        }
-                    }
-                    items.push(s);
-                    // 吃掉到下一个 `,` 为止的空白与分隔符。
-                    while matches!(chars.peek(), Some(c) if c.is_whitespace()) {
-                        chars.next();
-                    }
-                    if matches!(chars.peek(), Some(',')) {
-                        chars.next();
-                    }
-                }
-                Some(_) => {
-                    // 裸词：扫到引号外的 `,` 或串尾。
-                    let mut raw = String::new();
-                    while let Some(&c) = chars.peek() {
-                        if c == ',' {
-                            break;
-                        }
-                        raw.push(c);
-                        chars.next();
-                    }
-                    items.push(raw.trim().to_owned());
-                    if matches!(chars.peek(), Some(',')) {
-                        chars.next();
-                    }
-                }
-            }
-        }
-        items
-    }
-
     /// 一个极小的 frontmatter 解析器（仅测试用）：拆出 `---` 块与正文，回读 id/position/aliases，
-    /// 验证 node_to_markdown 的输出可被结构化读回（往返保真）。aliases 经 [`parse_flow_seq`]
-    /// 正确处理含逗号 / 转义的引号化元素（必修项 4）。
+    /// 验证 node_to_markdown 的输出可被结构化读回（往返保真）。aliases 经**正式** [`parse_flow_seq`]
+    /// （已从 test-only 提升为模块函数、导入侧 [`parse_frontmatter`] 复用）正确处理含逗号 / 转义的
+    /// 引号化元素。本 helper 仍单独回读 `id`（[`parse_frontmatter`] 刻意忽略 id），故保留。
     fn parse_md(md: &str) -> (u64, [f32; 2], Vec<String>, String) {
         let rest = md.strip_prefix("---\n").expect("frontmatter start");
         let end = rest.find("\n---\n").expect("frontmatter end");
@@ -1094,5 +1390,464 @@ mod tests {
         let cd_sig = [0x50, 0x4b, 0x01, 0x02];
         let count = zip.windows(4).filter(|w| *w == cd_sig).count();
         assert_eq!(count, files.len());
+    }
+
+    // ============================ #19 导入：markdown_to_node + 导入流水线 ============================
+
+    // ---- parse_frontmatter / markdown_to_node 与 #18 导出往返 ----
+
+    /// #18 导出 → #19 导入往返：text 经文件名 / note / position / aliases 保真。
+    #[test]
+    fn import_roundtrips_node_to_markdown() {
+        let n = node(99, 3.5, -2.0, "标题", "正文 [[链接]] 内容", &["别名"]);
+        let md = md_no_rename(&n); // stem == text，未改名口径
+                                   // 导出文件名 = sanitize(text) + .md；未含非法字符故 == text。
+        let filename = format!("{}.md", sanitize_filename(&n.text, n.id));
+        // 导入侧重分配 id（不复用 frontmatter 的 99）；position 缺省占位仅在 frontmatter 无坐标时取用。
+        let imported = markdown_to_node(&filename, &md, 7, egui::pos2(1000.0, 1000.0));
+        assert_eq!(
+            imported.id, 7,
+            "id 由调用方重分配，不复用 frontmatter 的 99"
+        );
+        assert_eq!(imported.text, "标题", "text 经文件名往返");
+        assert_eq!(imported.note, "正文 [[链接]] 内容", "note 经正文往返保真");
+        assert_eq!(
+            imported.position,
+            egui::pos2(3.5, -2.0),
+            "position 经 frontmatter 恢复"
+        );
+        assert_eq!(
+            imported.aliases,
+            vec!["别名".to_string()],
+            "aliases 经 frontmatter 恢复"
+        );
+    }
+
+    /// 标题含非法字符被 #18 sanitize 改名（`a:b` → 文件名 `a_b`，原标题注入 aliases）：
+    /// 导入后 text 变成 `a_b`（标题字节不保真），但原标题 `a:b` 在 aliases 里 → `[[a:b]]` 仍可寻址（链接保真）。
+    #[test]
+    fn import_rename_keeps_original_title_addressable_via_alias() {
+        let n = node(1, 0.0, 0.0, "a:b", "body", &[]);
+        let stem = sanitize_filename(&n.text, n.id); // "a_b"
+        let md = node_to_markdown(&n, &stem);
+        let filename = format!("{stem}.md");
+        let imported = markdown_to_node(&filename, &md, 5, egui::Pos2::ZERO);
+        assert_eq!(
+            imported.text, "a_b",
+            "改名后 text = sanitize 文件名（标题字节不保真）"
+        );
+        assert!(
+            imported.aliases.contains(&"a:b".to_string()),
+            "原标题注入 aliases，[[a:b]] 经别名仍可寻址（链接保真）"
+        );
+    }
+
+    /// 无 frontmatter 的外部 Obsidian `.md`：正文 = 整个 content、aliases 空、position 用占位 fallback。
+    #[test]
+    fn import_external_md_without_frontmatter() {
+        let content = "# 标题\n\n正文里有 [[别的笔记]] 链接。\n第二段。";
+        let imported = markdown_to_node("我的笔记.md", content, 3, egui::pos2(42.0, 7.0));
+        assert_eq!(imported.text, "我的笔记", "text 取文件名去 .md");
+        assert_eq!(
+            imported.note, content,
+            "无 frontmatter → 正文 = 整个 content"
+        );
+        assert!(imported.aliases.is_empty(), "外部 md 无 aliases");
+        assert_eq!(
+            imported.position,
+            egui::pos2(42.0, 7.0),
+            "缺坐标 → 用占位 fallback"
+        );
+    }
+
+    /// 坏 frontmatter 容错：起始 `---` 但 position / aliases 行畸形 → 不 panic、字段落默认、当纯正文不丢。
+    #[test]
+    fn import_malformed_frontmatter_is_lenient() {
+        // 有起始 `---` 但无闭合 `---`：整段当正文。
+        let no_close = "---\nid: 1\nposition broken\n正文继续";
+        let n1 = markdown_to_node("a.md", no_close, 1, egui::pos2(5.0, 5.0));
+        assert_eq!(n1.note, no_close, "无闭合 frontmatter → 整段当正文（不吞）");
+        assert_eq!(n1.position, egui::pos2(5.0, 5.0), "无有效坐标 → 占位");
+
+        // 闭合 frontmatter 但 position / aliases 畸形：解析回退默认，不 panic。
+        let bad_fields = "---\nposition: [not, numbers]\naliases: [unterminated\n---\n\n正文";
+        let n2 = markdown_to_node("b.md", bad_fields, 2, egui::pos2(9.0, 9.0));
+        assert_eq!(
+            n2.position,
+            egui::pos2(9.0, 9.0),
+            "坏 position 行 → 占位坐标"
+        );
+        assert_eq!(n2.note, "正文", "正文仍被正确拆出");
+    }
+
+    /// 中文标题 / 正文 / 别名整链路往返（含 frontmatter 引号化中文别名读回）。
+    #[test]
+    fn import_roundtrips_chinese() {
+        let n = node(
+            1,
+            12.0,
+            -7.0,
+            "知识图谱",
+            "关联 [[第二大脑]] 与 [[ML]]",
+            &["KG", "图谱"],
+        );
+        let md = md_no_rename(&n);
+        let filename = format!("{}.md", sanitize_filename(&n.text, n.id));
+        let imported = markdown_to_node(&filename, &md, 9, egui::Pos2::ZERO);
+        assert_eq!(imported.text, "知识图谱");
+        assert_eq!(imported.note, "关联 [[第二大脑]] 与 [[ML]]");
+        assert_eq!(imported.aliases, vec!["KG".to_string(), "图谱".to_string()]);
+        assert_eq!(imported.position, egui::pos2(12.0, -7.0));
+    }
+
+    /// 文件名可带路径前缀（vault 子目录上传）与大小写 `.MD` 扩展：均取末段、去扩展为标题。
+    #[test]
+    fn import_filename_strips_path_and_extension() {
+        let n = markdown_to_node("sub/dir/Note.MD", "body", 1, egui::Pos2::ZERO);
+        assert_eq!(n.text, "Note", "取末段 + 去大小写 .MD 扩展");
+        let n2 = markdown_to_node("plain", "body", 1, egui::Pos2::ZERO);
+        assert_eq!(n2.text, "plain", "无扩展 → 原样为标题");
+    }
+
+    // ---- import_markdown_batch：顺序敏感（先全建点再 resolve）+ 旁路 + 容错 ----
+
+    fn fresh() -> (Graph, CanvasStateResource) {
+        (Graph::default(), CanvasStateResource::default())
+    }
+
+    /// 一篇导出的 .md（text=A，正文 [[B]]）+ 一篇 text=B：先全建点再 resolve 后，A->B 连成 wiki 边，
+    /// **不**为 [[B]] 重复建第二个 B（顺序铁律的核心保证）。
+    #[test]
+    fn import_batch_links_within_batch_no_duplicate_node() {
+        let (mut g, canvas) = fresh();
+        let files = vec![
+            (
+                "A.md".to_owned(),
+                "---\nposition: [0, 0]\n---\n\n指向 [[B]]".to_owned(),
+            ),
+            (
+                "B.md".to_owned(),
+                "---\nposition: [100, 0]\n---\n\nB 的正文".to_owned(),
+            ),
+        ];
+        let out = import_markdown_batch(&mut g, &canvas, &files);
+        assert_eq!(out.imported_nodes, 2, "两篇 .md → 两个节点");
+        assert_eq!(
+            out.resolved_new_nodes, 0,
+            "[[B]] 命中本批已建的 B，不重复建点"
+        );
+        assert_eq!(out.resolved_edges, 1, "A->B 一条 wiki 边");
+        assert_eq!(g.graph.node_count(), 2, "全图恰好两个节点（无重复）");
+        let a = crate::wikilink::find_by_title(&g, "A").unwrap();
+        let b = crate::wikilink::find_by_title(&g, "B").unwrap();
+        assert!(g.edge_exists(a, b), "A->B wiki 边存在");
+    }
+
+    /// 反序若先 resolve B 再建 A 不会发生（流水线强制先全建点）：即便 [[目标]] 在批内靠后，也命中不新建。
+    #[test]
+    fn import_batch_order_independent_of_file_order() {
+        let (mut g, canvas) = fresh();
+        // 把"引用方"放前、"被引用方"放后：先全建点保证 resolve 时 B 已在图中。
+        let files = vec![
+            ("A.md".to_owned(), "指向 [[B]]".to_owned()),
+            ("B.md".to_owned(), "body".to_owned()),
+        ];
+        let out = import_markdown_batch(&mut g, &canvas, &files);
+        assert_eq!(out.resolved_new_nodes, 0, "顺序无关：B 已先建，不重复");
+        assert_eq!(g.graph.node_count(), 2);
+    }
+
+    /// 外部 md 引用一个**批内没有**的标题：resolve 阶段自动建缺失目标（与手动编辑正文同一路径）。
+    #[test]
+    fn import_batch_resolve_creates_missing_target() {
+        let (mut g, canvas) = fresh();
+        let files = vec![("A.md".to_owned(), "指向 [[不存在的]]".to_owned())];
+        let out = import_markdown_batch(&mut g, &canvas, &files);
+        assert_eq!(out.imported_nodes, 1);
+        assert_eq!(out.resolved_new_nodes, 1, "缺失目标自动建");
+        assert_eq!(out.resolved_edges, 1);
+        assert!(crate::wikilink::find_by_title(&g, "不存在的").is_some());
+    }
+
+    /// 手画边旁路 JSON：按端点标题连 Manual 边。
+    #[test]
+    fn import_batch_connects_manual_edges_sidecar() {
+        let (mut g, canvas) = fresh();
+        let sidecar = manual_edges_json(&[ManualEdgeRef {
+            source_title: "A".to_owned(),
+            target_title: "B".to_owned(),
+        }])
+        .unwrap();
+        let files = vec![
+            ("A.md".to_owned(), "body A".to_owned()),
+            ("B.md".to_owned(), "body B".to_owned()),
+            (
+                MANUAL_EDGES_FILENAME.to_owned(),
+                String::from_utf8(sidecar).unwrap(),
+            ),
+        ];
+        let out = import_markdown_batch(&mut g, &canvas, &files);
+        assert_eq!(out.imported_nodes, 2, "旁路 json 不算节点");
+        assert_eq!(out.manual_edges, 1, "旁路连一条 Manual 边");
+        let a = crate::wikilink::find_by_title(&g, "A").unwrap();
+        let b = crate::wikilink::find_by_title(&g, "B").unwrap();
+        assert!(g.edge_exists(a, b));
+        // 该边是 Manual（不会被后续 resolve 误删）：在 a 的出边里找到指向 b 的那条，断言其 origin。
+        let origin = g
+            .graph
+            .edges_directed(a, petgraph::Direction::Outgoing)
+            .find(|e| e.target() == b)
+            .map(|e| e.weight().origin);
+        assert_eq!(origin, Some(EdgeOrigin::Manual), "旁路边是 Manual");
+    }
+
+    /// 坏旁路 JSON 不中断整批：.md 照常导入，旁路解析失败仅跳过（manual_edges=0）。
+    #[test]
+    fn import_batch_bad_sidecar_does_not_abort() {
+        let (mut g, canvas) = fresh();
+        let files = vec![
+            ("A.md".to_owned(), "body".to_owned()),
+            (
+                MANUAL_EDGES_FILENAME.to_owned(),
+                "{ not valid json".to_owned(),
+            ),
+        ];
+        let out = import_markdown_batch(&mut g, &canvas, &files);
+        assert_eq!(out.imported_nodes, 1, "坏旁路不影响 .md 导入");
+        assert_eq!(out.manual_edges, 0, "坏 json 跳过");
+    }
+
+    /// 旁路端点标题在图中找不到：跳过该条、不中断（manual_edges 不计该条）。
+    #[test]
+    fn import_batch_sidecar_unknown_endpoint_skipped() {
+        let (mut g, canvas) = fresh();
+        let sidecar = manual_edges_json(&[ManualEdgeRef {
+            source_title: "A".to_owned(),
+            target_title: "幽灵节点".to_owned(),
+        }])
+        .unwrap();
+        let files = vec![
+            ("A.md".to_owned(), "body".to_owned()),
+            (
+                MANUAL_EDGES_FILENAME.to_owned(),
+                String::from_utf8(sidecar).unwrap(),
+            ),
+        ];
+        let out = import_markdown_batch(&mut g, &canvas, &files);
+        assert_eq!(out.manual_edges, 0, "端点找不到 → 跳过该条");
+    }
+
+    /// 全部 frontmatter 缺坐标 → 全用螺旋占位、彼此不重合，placeheld_positions 计数等于节点数。
+    #[test]
+    fn import_batch_placeholder_positions_distinct() {
+        let (mut g, canvas) = fresh();
+        let files: Vec<(String, String)> = (0..5)
+            .map(|i| (format!("N{i}.md"), format!("body {i}")))
+            .collect();
+        let out = import_markdown_batch(&mut g, &canvas, &files);
+        assert_eq!(out.placeheld_positions, 5, "5 篇全缺坐标 → 5 个占位");
+        // 占位坐标两两不重合（spiral_placeholder 确定性散布）。
+        let positions: Vec<egui::Pos2> = g.graph.node_weights().map(|n| n.position).collect();
+        for i in 0..positions.len() {
+            for j in (i + 1)..positions.len() {
+                assert_ne!(positions[i], positions[j], "占位坐标应两两不同");
+            }
+        }
+    }
+
+    /// 有坐标的节点不占用螺旋占位序号（placeheld_positions 只数缺坐标的）。
+    #[test]
+    fn import_batch_counts_only_missing_positions() {
+        let (mut g, canvas) = fresh();
+        let files = vec![
+            (
+                "有坐标.md".to_owned(),
+                "---\nposition: [3, 4]\n---\n\nbody".to_owned(),
+            ),
+            ("无坐标.md".to_owned(), "body".to_owned()),
+        ];
+        let out = import_markdown_batch(&mut g, &canvas, &files);
+        assert_eq!(out.placeheld_positions, 1, "只有 1 篇缺坐标");
+        let with = crate::wikilink::find_by_title(&g, "有坐标").unwrap();
+        assert_eq!(
+            g.get_node(with).unwrap().position,
+            egui::pos2(3.0, 4.0),
+            "有坐标的用 frontmatter 坐标"
+        );
+    }
+
+    /// 导入进**既有图**：与现有同名节点复用（不重复建），id 不与现有撞（由调用方 new_node_id 保证）。
+    #[test]
+    fn import_batch_into_existing_graph_reuses_existing_title() {
+        let (mut g, canvas) = fresh();
+        // 既有图已有 B。
+        let existing_b = {
+            let id = canvas.read_resource(|c| c.new_node_id());
+            g.add_node(node(id, 0.0, 0.0, "B", "既有 B", &[]))
+        };
+        // 导入 A，正文 [[B]] → 应复用既有 B、不新建。
+        let files = vec![("A.md".to_owned(), "指向 [[B]]".to_owned())];
+        let out = import_markdown_batch(&mut g, &canvas, &files);
+        assert_eq!(out.resolved_new_nodes, 0, "复用既有 B");
+        assert_eq!(g.graph.node_count(), 2, "A + 既有 B，无重复");
+        let a = crate::wikilink::find_by_title(&g, "A").unwrap();
+        assert!(g.edge_exists(a, existing_b), "A->既有B");
+    }
+
+    /// 空批次：无操作（节点/边均不变），所有计数为 0。
+    #[test]
+    fn import_batch_empty_is_noop() {
+        let (mut g, canvas) = fresh();
+        let out = import_markdown_batch(&mut g, &canvas, &[]);
+        assert_eq!(out, ImportOutcome::default());
+        assert_eq!(g.graph.node_count(), 0);
+    }
+
+    // ---- 必修项 3：frontmatter CRLF 容错（真实 Obsidian / Windows / git autocrlf 来源） ----
+
+    /// CRLF（`---\r\n…---\r\n`）frontmatter：position / aliases 必须正确解析（不被当正文吞掉），
+    /// 正文 body 逐字节原样（含其自身的 CRLF 行尾，SSOT §7 不归一）。
+    #[test]
+    fn parse_frontmatter_tolerates_crlf() {
+        // 真实 Windows / Obsidian 行尾：每行以 \r\n 结束，含 frontmatter 与正文。
+        let content =
+            "---\r\nid: 42\r\nposition: [12.5, -7]\r\naliases: [\"别名一\", alias2]\r\n---\r\n\r\n正文第一行\r\n第二行";
+        let (fm, body) = parse_frontmatter(content);
+        assert_eq!(
+            fm.position,
+            Some(egui::pos2(12.5, -7.0)),
+            "CRLF frontmatter 的 position 应正确解析（不被静默丢失）"
+        );
+        assert_eq!(
+            fm.aliases,
+            vec!["别名一".to_string(), "alias2".to_string()],
+            "CRLF frontmatter 的 aliases 应正确解析"
+        );
+        // 正文逐字节原样：保留 CRLF 行尾、不归一（note = SSOT）。
+        assert_eq!(
+            body, "正文第一行\r\n第二行",
+            "CRLF 正文逐字节原样（含 \\r\\n，仅剥 frontmatter 后一个空行）"
+        );
+    }
+
+    /// CRLF 外部 md（无 frontmatter）：整段当正文、不丢，aliases 空、position 用占位 fallback。
+    #[test]
+    fn markdown_to_node_crlf_external_md() {
+        let content = "# 标题\r\n\r\n正文 [[别的笔记]]\r\n第二段";
+        let imported = markdown_to_node("CRLF笔记.md", content, 3, egui::pos2(42.0, 7.0));
+        assert_eq!(imported.text, "CRLF笔记");
+        assert_eq!(
+            imported.note, content,
+            "无 frontmatter 的 CRLF md → 正文 = 整个 content（逐字节原样）"
+        );
+        assert!(imported.aliases.is_empty());
+        assert_eq!(imported.position, egui::pos2(42.0, 7.0), "缺坐标 → 占位");
+    }
+
+    /// CRLF frontmatter 经 markdown_to_node 端到端：position / aliases 进 Node，body 原样。
+    #[test]
+    fn markdown_to_node_crlf_frontmatter_parses() {
+        let content =
+            "---\r\nposition: [3, 4]\r\naliases: [\"KG\"]\r\n---\r\n\r\n关联 [[第二大脑]]\r\nbody";
+        let n = markdown_to_node("知识图谱.md", content, 9, egui::Pos2::ZERO);
+        assert_eq!(n.position, egui::pos2(3.0, 4.0), "CRLF position 进 Node");
+        assert_eq!(n.aliases, vec!["KG".to_string()], "CRLF aliases 进 Node");
+        assert_eq!(n.note, "关联 [[第二大脑]]\r\nbody", "CRLF body 逐字节原样");
+    }
+
+    // ---- 必修项 2：append 语义钉死（导入永远新增、绝不合并；重名告警） ----
+
+    /// ①导入进**空图** → 节点 / 边正确（往返），无重名碰撞。
+    #[test]
+    fn import_into_empty_graph_no_collision_roundtrip() {
+        let (mut g, canvas) = fresh();
+        let files = vec![
+            (
+                "A.md".to_owned(),
+                "---\nposition: [0, 0]\n---\n\n指向 [[B]]".to_owned(),
+            ),
+            (
+                "B.md".to_owned(),
+                "---\nposition: [100, 0]\n---\n\nB 正文".to_owned(),
+            ),
+        ];
+        let out = import_markdown_batch(&mut g, &canvas, &files);
+        assert_eq!(out.imported_nodes, 2);
+        assert_eq!(out.renamed_collisions, 0, "空图导入无既有同名节点");
+        assert_eq!(g.graph.node_count(), 2, "恰好两个节点");
+        let a = crate::wikilink::find_by_title(&g, "A").unwrap();
+        let b = crate::wikilink::find_by_title(&g, "B").unwrap();
+        assert!(g.edge_exists(a, b), "A->B wiki 边");
+    }
+
+    /// ②导入进**非空图（已含同名节点）** → **append**：节点数增加、不合并，且 renamed_collisions 计数命中。
+    ///
+    /// 这是"导出→编辑→再导入"会静默翻倍的语义钉死：导入一个标题为 `A` 的 `.md` 进已有 `A` 的图，
+    /// 不覆盖既有 A，而是**新增**第二个标题 `A` 的节点（与 #18 vault 去重导出语义对偶——往返靠先 New）。
+    #[test]
+    fn import_into_nonempty_graph_appends_and_warns_on_collision() {
+        let (mut g, canvas) = fresh();
+        // 既有图已有标题 A（手摆位置 (500, 500)、自己的 note）。
+        let existing_a = {
+            let id = canvas.read_resource(|c| c.new_node_id());
+            g.add_node(node(id, 500.0, 500.0, "A", "既有 A 的 note", &[]))
+        };
+        let before_count = g.graph.node_count();
+
+        // 导入一篇标题也叫 A 的 .md（带自己的坐标 / note）。
+        let files = vec![(
+            "A.md".to_owned(),
+            "---\nposition: [10, 20]\n---\n\n导入版 A 的 note".to_owned(),
+        )];
+        let out = import_markdown_batch(&mut g, &canvas, &files);
+
+        // append：新增一个节点（不合并、不覆盖既有 A）。
+        assert_eq!(out.imported_nodes, 1);
+        assert_eq!(
+            out.renamed_collisions, 1,
+            "导入节点标题与既有 A 同名 → 命中重名告警计数"
+        );
+        assert_eq!(
+            g.graph.node_count(),
+            before_count + 1,
+            "append：节点数 +1（绝不合并/覆盖既有同名节点）"
+        );
+
+        // 既有 A 的位置 / note 纹丝不动（非破坏）。
+        let existing = g.get_node(existing_a).unwrap();
+        assert_eq!(
+            existing.position,
+            egui::pos2(500.0, 500.0),
+            "既有 A 位置不动"
+        );
+        assert_eq!(existing.note, "既有 A 的 note", "既有 A 的 note 不被覆盖");
+
+        // 图中现有两个标题为 A 的节点（既有 + 导入），导入版用自己的坐标。
+        let titled_a: Vec<_> = g
+            .graph
+            .node_indices()
+            .filter(|&i| g.graph[i].text == "A")
+            .collect();
+        assert_eq!(titled_a.len(), 2, "两个同名 A 节点共存（append）");
+        assert!(
+            titled_a
+                .iter()
+                .any(|&i| g.graph[i].position == egui::pos2(10.0, 20.0)),
+            "导入版 A 用 frontmatter 坐标 (10, 20)"
+        );
+    }
+
+    /// 导入进非空图但**无同名**：renamed_collisions = 0（重名告警只在真撞名时触发）。
+    #[test]
+    fn import_into_nonempty_graph_distinct_titles_no_collision() {
+        let (mut g, canvas) = fresh();
+        let _existing = {
+            let id = canvas.read_resource(|c| c.new_node_id());
+            g.add_node(node(id, 0.0, 0.0, "既有", "note", &[]))
+        };
+        let files = vec![("全新标题.md".to_owned(), "body".to_owned())];
+        let out = import_markdown_batch(&mut g, &canvas, &files);
+        assert_eq!(out.renamed_collisions, 0, "无同名 → 不告警");
+        assert_eq!(g.graph.node_count(), 2);
     }
 }
