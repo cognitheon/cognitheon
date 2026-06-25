@@ -1,5 +1,6 @@
 pub mod anchor;
 pub mod edge;
+pub mod edge_hit;
 pub mod graph_impl;
 pub mod helpers;
 pub mod layout;

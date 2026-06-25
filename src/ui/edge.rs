@@ -2,20 +2,57 @@ use egui::*;
 use petgraph::graph::EdgeIndex;
 
 use crate::{
+    colors::{edge_hover, edge_selected},
     geometry::{edge_offset_direction, intersect_rect_with_pos, IntersectDirection},
     graph::{
         anchor::{BezierAnchor, LineAnchor},
         edge::EdgeType,
+        edge_hit::{get_hovered_edge, publish_edge_hit_info},
         helpers::{get_node_render_info, node_rect_center},
         render_info::NodeRenderInfo,
+        selection::GraphSelection,
     },
     resource::{CanvasStateResource, GraphResource},
 };
 
 use super::{
-    bezier::{BezierEdge, BezierWidget},
+    bezier::{cubic_bezier, BezierEdge, BezierWidget},
     line_edge::{LineEdge, LineWidget},
 };
+
+/// 沿一条边采样的画布坐标折线（命中测试 + 选中/hover 高亮共用）。
+///
+/// - Line：两端锚点（2 点）。
+/// - Bezier：每段三次曲线细分 `SUBDIV` 段，与渲染细分一致，保证高亮描线贴合实际曲线。
+fn edge_canvas_samples(edge_type: &EdgeType, line: &LineEdge, bezier: &BezierEdge) -> Vec<Pos2> {
+    const SUBDIV: usize = 100;
+    match edge_type {
+        EdgeType::Line => vec![line.source.canvas_pos, line.target.canvas_pos],
+        EdgeType::Bezier => {
+            // 与 BezierWidget::draw_bezier 同构的锚点拼接：source -> control... -> target。
+            let full_anchors = std::iter::once(&bezier.source_anchor)
+                .chain(bezier.control_anchors.iter())
+                .chain(std::iter::once(&bezier.target_anchor))
+                .collect::<Vec<_>>();
+            let mut samples = Vec::new();
+            for i in 0..full_anchors.len().saturating_sub(1) {
+                let a = full_anchors[i];
+                let b = full_anchors[i + 1];
+                for step in 0..=SUBDIV {
+                    let t = step as f32 / SUBDIV as f32;
+                    samples.push(cubic_bezier(
+                        a.canvas_pos,
+                        a.handle_out_canvas_pos,
+                        b.handle_in_canvas_pos,
+                        b.canvas_pos,
+                        t,
+                    ));
+                }
+            }
+            samples
+        }
+    }
+}
 
 pub struct EdgeWidget {
     pub edge_index: EdgeIndex,
@@ -189,6 +226,39 @@ impl EdgeWidget {
     }
 }
 
+impl EdgeWidget {
+    /// 本边是否在 `GraphSelection::Edge` 选中集中。选中真源唯一走 `GraphSelection::Edge`
+    /// （§5：不复用 bezier.rs 里那个已注释失效的 `selected` 字段，避免双套真源）。
+    fn is_selected(&self) -> bool {
+        self.graph_resource.read_resource(|graph| {
+            matches!(&graph.selected, GraphSelection::Edge(edges) if edges.contains(&self.edge_index))
+        })
+    }
+
+    /// 在已渲染的边之上画一层醒目高亮描线（选中优先于 hover）。
+    ///
+    /// 走画布采样折线 → 逐点 `to_screen` 折线描边，线宽 `× scaling`（§3.2）。这是渲染态改动、
+    /// 只在 edge.rs，与命中采样同一份几何（视觉与命中一致）。
+    fn draw_highlight(&self, ui: &egui::Ui, canvas_samples: &[Pos2], color: egui::Color32) {
+        if canvas_samples.len() < 2 {
+            return;
+        }
+        let (scaling, screen_pts) = self.canvas_state_resource.read_resource(|cs| {
+            (
+                cs.transform.scaling,
+                canvas_samples
+                    .iter()
+                    .map(|p| cs.to_screen(*p))
+                    .collect::<Vec<_>>(),
+            )
+        });
+        // 比默认边（2.0）更粗，× scaling 跟随缩放。
+        let width = 4.0 * scaling;
+        ui.painter()
+            .add(Shape::line(screen_pts, Stroke::new(width, color)));
+    }
+}
+
 impl Widget for EdgeWidget {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
         self.update_bezier_edge(ui);
@@ -198,31 +268,35 @@ impl Widget for EdgeWidget {
         let edge_type = self
             .graph_resource
             .read_resource(|graph| graph.edge_type.clone());
+
+        // 取本帧最新几何，算出画布采样折线：① 发布到命中旁路供 determine_target 反读
+        // （§3.3 边版本旁路，承认一帧延迟）；② 选中/hover 时复用同一份几何画高亮，命中与视觉一致。
+        let (line_edge, bezier_edge) = self.graph_resource.read_resource(|graph| {
+            let edge = graph.get_edge(self.edge_index).unwrap();
+            (edge.line_edge.clone(), edge.bezier_edge.clone())
+        });
+        let canvas_samples = edge_canvas_samples(&edge_type, &line_edge, &bezier_edge);
+        publish_edge_hit_info(ui.ctx(), self.edge_index, canvas_samples.clone());
+
         let response = match edge_type {
-            EdgeType::Bezier => {
-                let bezier_edge = self.graph_resource.read_resource(|graph| {
-                    graph.get_edge(self.edge_index).unwrap().bezier_edge.clone()
-                });
-                ui.add(&mut BezierWidget::new(
-                    bezier_edge.clone(),
-                    self.canvas_state_resource,
-                ))
-            }
-            EdgeType::Line => {
-                let line_edge = self.graph_resource.read_resource(|graph| {
-                    graph.get_edge(self.edge_index).unwrap().line_edge.clone()
-                });
-                ui.add(LineWidget::new(
-                    line_edge.clone(),
-                    self.canvas_state_resource,
-                ))
-            }
+            EdgeType::Bezier => ui.add(&mut BezierWidget::new(
+                bezier_edge,
+                self.canvas_state_resource.clone(),
+            )),
+            EdgeType::Line => ui.add(LineWidget::new(
+                line_edge,
+                self.canvas_state_resource.clone(),
+            )),
         };
 
-        // ui.add(BezierWidget::new(
-        //     vec![source_anchor, target_anchor],
-        //     EdgeIndex::new(0),
-        // ));
+        // 选中 / hover 高亮：选中优先（更醒目的红），其次 hover（浅蓝）。
+        let theme = ui.ctx().theme();
+        if self.is_selected() {
+            self.draw_highlight(ui, &canvas_samples, edge_selected(theme));
+        } else if get_hovered_edge(ui.ctx()) == Some(self.edge_index) {
+            self.draw_highlight(ui, &canvas_samples, edge_hover(theme));
+        }
+
         response
     }
 }

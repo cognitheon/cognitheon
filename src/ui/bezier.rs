@@ -645,7 +645,7 @@ impl Widget for &mut BezierWidget {
     }
 }
 
-fn cubic_bezier(
+pub(crate) fn cubic_bezier(
     p0: egui::Pos2,
     p1: egui::Pos2,
     p2: egui::Pos2,

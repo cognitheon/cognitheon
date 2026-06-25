@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use crate::{
     gpu_render::particle::particle_callback::ParticleCallback,
+    graph::edge_hit::{get_edge_hit_info, point_polyline_distance, set_hovered_edge},
     graph::render_info::NodeRenderInfo,
     history::History,
     input::{events::InputTarget, input_state::InputState},
@@ -12,7 +13,7 @@ use crate::{
 
 use eframe::egui_wgpu;
 use egui::*;
-use petgraph::graph::NodeIndex;
+use petgraph::graph::{EdgeIndex, NodeIndex};
 
 use super::button_state::ButtonState;
 
@@ -123,6 +124,45 @@ impl InputContext {
                 false
             })
         })
+    }
+
+    /// 检查鼠标是否命中某条边，返回最近且在阈值内的 `EdgeIndex`。
+    ///
+    /// 反读 `EdgeWidget` 每帧发布到 temp data 的画布采样折线（§3.3 边几何旁路，承认一帧延迟：
+    /// 本帧新建的边当帧未发布、命中落空，下帧即可命中），做**画布空间**的点到折线距离测试。
+    /// 距离阈值随缩放换算到画布空间 = `屏幕阈值 / scaling`（§3.2）；多条边命中时取最近一条。
+    /// 缺采样（未发布/点数不足）的边早退跳过，不 panic（§3.3）。
+    pub fn hit_test_edge(&self, ui: &egui::Ui, screen_pos: Pos2) -> Option<EdgeIndex> {
+        /// 边命中的屏幕像素阈值（光标离边描线多少像素内算命中）。
+        const HIT_THRESHOLD_SCREEN: f32 = 8.0;
+
+        let scaling = self
+            .canvas_state_resource
+            .read_resource(|cs| cs.transform.scaling);
+        // 阈值换算到画布空间：屏幕 px / scaling（§3.2）。scaling 已 clamp 到 [0.1, 100]，不为 0。
+        let threshold_canvas = HIT_THRESHOLD_SCREEN / scaling;
+        let canvas_pos = self
+            .canvas_state_resource
+            .read_resource(|cs| cs.to_canvas(screen_pos));
+
+        let edge_indices = self
+            .graph_resource
+            .read_resource(|graph| graph.graph.edge_indices().collect::<Vec<EdgeIndex>>());
+
+        let mut best: Option<(EdgeIndex, f32)> = None;
+        for edge_index in edge_indices {
+            let Some(hit_info) = get_edge_hit_info(ui.ctx(), edge_index) else {
+                continue; // 该边几何尚未发布（一帧延迟）——跳过，不 panic。
+            };
+            let dist = point_polyline_distance(canvas_pos, &hit_info.canvas_samples);
+            if dist <= threshold_canvas {
+                match best {
+                    Some((_, best_dist)) if best_dist <= dist => {}
+                    _ => best = Some((edge_index, dist)),
+                }
+            }
+        }
+        best.map(|(idx, _)| idx)
     }
 
     /// 将屏幕坐标转换为画布坐标
@@ -370,13 +410,22 @@ impl InputStateManager {
     fn determine_target(&self, ui: &egui::Ui) -> InputTarget {
         let cursor_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or(Pos2::ZERO);
 
-        // 首先检查节点（优先级最高）
+        // 首先检查节点（优先级最高，短路）。命中节点时清空 hover 边（节点压在边之上）。
         if let Some(node_index) = self.context.hit_test_node(ui, cursor_pos) {
+            set_hovered_edge(ui.ctx(), None);
             return InputTarget::Node(node_index);
         }
 
-        // 检查边和控制点...
-        // （这里可以添加你特定的边和控制点检测逻辑）
+        // 边命中：性能短路——只在 Idle 态且节点已优先未命中时才遍历边（O(边数×采样)/帧）。
+        // 非 Idle（拖拽/框选/连边中）不需要边目标，跳过遍历同时清空 hover 高亮。
+        if matches!(self.current_state, InputState::Idle) {
+            if let Some(edge_index) = self.context.hit_test_edge(ui, cursor_pos) {
+                set_hovered_edge(ui.ctx(), Some(edge_index));
+                return InputTarget::Edge(edge_index);
+            }
+        }
+        // 未命中边（或非 Idle）：清空 hover 高亮，避免上一帧的高亮残留。
+        set_hovered_edge(ui.ctx(), None);
 
         // 默认为画布
         InputTarget::Canvas
@@ -440,6 +489,36 @@ impl InputStateManager {
                         selected_indices: vec![*node_index],
                     });
                 }
+            }
+            InputTarget::Edge(edge_index) => {
+                // 点击边 → 选中（选中真源唯一走 GraphSelection::Edge，§5 不碰 bezier 失效字段）。
+                // 编辑节点中点边：先退出编辑（与点 Canvas 一致），不改选中。
+                if matches!(
+                    self.current_state,
+                    InputState::EditingNode { node_index: _ }
+                ) {
+                    self.transition_to(InputState::Idle);
+                } else {
+                    let shift_pressed = ui.input(|i| i.modifiers.shift);
+                    self.context.graph_resource.with_resource(|graph| {
+                        if shift_pressed {
+                            // Shift 追加多选：已是边选区则去重追加，否则新建边选区（替换异类选中）。
+                            match &mut graph.selected {
+                                crate::graph::selection::GraphSelection::Edge(edges) => {
+                                    if !edges.contains(edge_index) {
+                                        edges.push(*edge_index);
+                                    }
+                                }
+                                _ => graph.select_edge(*edge_index),
+                            }
+                        } else {
+                            // 普通点击：替换为仅含本边的选区。
+                            graph.selected.clear();
+                            graph.select_edge(*edge_index);
+                        }
+                    });
+                }
+                // 边目前不进入拖拽态，停留 Idle。
             }
             InputTarget::Canvas => {
                 // self.context.graph_resource.with_resource(|graph| {
@@ -678,7 +757,11 @@ impl InputStateManager {
     }
 
     fn handle_escape_key(&mut self) {
-        // 几乎任何状态下，按下Escape都应该回到空闲状态
+        // Escape 收口两件正交的事，拆开处理，避免“仅在非 Idle 才清选区”的旧短路（§3.4 不变量：
+        // Escape 能从任意态回 Idle）：
+        // 1) 中止进行中的手势 —— 仅当非 Idle 时回 Idle（保留“Escape 打断拖拽/框选/连边”原语义）。
+        // 2) 清选区 + 退出编辑 —— 始终执行（含 Idle 态）。否则点边/点节点落定后停在 Idle，
+        //    Esc 永远清不掉高亮（选区/editing 均为运行态 #[serde(skip)]，非图变更，不打快照、不影响 undo）。
         if !matches!(self.current_state, InputState::Idle) {
             // 拖拽中途被 Escape 打断：节点位移已落到图上（不回滚），把暂存快照按是否真移动了提交/丢弃，
             // 避免暂存快照泄漏到下一次操作（§3.4：每个拖拽态收尾不得泄漏）。
@@ -686,13 +769,13 @@ impl InputStateManager {
                 self.finalize_drag_snapshot();
             }
             self.transition_to(InputState::Idle);
-
-            // 清除选择
-            self.context.graph_resource.with_resource(|graph| {
-                graph.selected.clear();
-                graph.set_editing_node(None);
-            });
         }
+
+        // 清除选择 / 退出编辑（始终执行，含 Idle 态）。
+        self.context.graph_resource.with_resource(|graph| {
+            graph.selected.clear();
+            graph.set_editing_node(None);
+        });
     }
 
     fn handle_delete_key(&mut self) {
@@ -703,27 +786,47 @@ impl InputStateManager {
             return;
         }
 
-        // 先在写闭包外读出待删节点；为空则不打快照（避免空选下按 Delete 产生空撤销项）。
-        let nodes_to_remove = self.context.graph_resource.read_resource(|graph| {
-            if let crate::graph::selection::GraphSelection::Node(nodes) = &graph.selected {
-                nodes.clone()
-            } else {
-                Vec::new()
-            }
-        });
-        if nodes_to_remove.is_empty() {
-            return;
-        }
+        use crate::graph::selection::GraphSelection;
 
-        // 删除选中节点（连同其边）——经 history 打一次快照，撤销可整组复活（§3.3 索引稳定）。
-        self.context
-            .history
-            .mutate(&self.context.graph_resource, |graph| {
-                for node_index in nodes_to_remove {
-                    graph.remove_node(node_index);
+        // 在写闭包外读出当前选区类型（§3.1：克隆出待删集，绝不在写闭包内重入读同资源）。
+        // 节点与边选区互斥（GraphSelection 同时只能是一种），按类型分派删除。
+        let selection = self
+            .context
+            .graph_resource
+            .read_resource(|graph| graph.selected.clone());
+
+        match selection {
+            GraphSelection::Node(nodes_to_remove) => {
+                if nodes_to_remove.is_empty() {
+                    return; // 空选不打快照，避免空撤销项。
                 }
-                graph.selected.clear();
-            });
+                // 删除选中节点（连同其边）——经 history 打一次快照，撤销可整组复活（§3.3 索引稳定）。
+                self.context
+                    .history
+                    .mutate(&self.context.graph_resource, |graph| {
+                        for node_index in nodes_to_remove {
+                            graph.remove_node(node_index);
+                        }
+                        graph.selected.clear();
+                    });
+            }
+            GraphSelection::Edge(edges_to_remove) => {
+                if edges_to_remove.is_empty() {
+                    return; // 空选不打快照。
+                }
+                // 删除选中边——经 history 打一次快照可撤销（§3.3：StableGraph 删边后 EdgeIndex 稳定，
+                // 撤销时整图快照替换即复活原边）。只删边、不动端点节点。
+                self.context
+                    .history
+                    .mutate(&self.context.graph_resource, |graph| {
+                        for edge_index in edges_to_remove {
+                            graph.remove_edge(edge_index);
+                        }
+                        graph.selected.clear();
+                    });
+            }
+            GraphSelection::None => {}
+        }
     }
 
     fn handle_double_click(&mut self, _ui: &mut egui::Ui, target: &InputTarget) {
