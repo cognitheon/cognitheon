@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::graph::node::Node;
+use crate::history::History;
 use crate::resource::{CanvasStateResource, GraphResource};
 use crate::ui::bezier::BezierEdge;
 use crate::ui::edge::EdgeWidget;
@@ -190,6 +191,7 @@ pub fn render_graph(
     ui: &mut egui::Ui,
     graph_resource: GraphResource,
     canvas_state_resource: CanvasStateResource,
+    history: History,
 ) {
     let node_indices = graph_resource
         .read_resource(|graph| graph.graph.node_indices().collect::<Vec<NodeIndex>>());
@@ -215,6 +217,7 @@ pub fn render_graph(
             node_index,
             graph_resource.clone(),
             canvas_state_resource.clone(),
+            history.clone(),
         );
         node_widget.add_observer(Arc::new(NodeRenderObserver::new(ui.ctx().clone())));
         ui.add(node_widget);

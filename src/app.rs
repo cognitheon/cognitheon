@@ -6,6 +6,7 @@ use rfd::AsyncFileDialog;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::{Builder, Runtime};
 
+use crate::history::History;
 use crate::resource::{CanvasStateResource, GraphResource, ParticleSystemResource};
 // use crate::globals::{CanvasStateResource, GraphResource};
 use crate::gpu_render::particle::particle_system::ParticleSystem;
@@ -27,6 +28,10 @@ pub struct CognitheonApp {
     // edge_type: EdgeType,
     canvas_resource: CanvasStateResource,
     graph_resource: GraphResource,
+    /// 撤销/重做历史栈：运行态，**不持久化**（`.cnt` / storage 格式零变更，AGENTS.md §7）。
+    /// 同一个句柄经构造函数注入到 `canvas_widget` 的输入状态机与节点 widget，写同一真源（§3.1）。
+    #[serde(skip)]
+    history: History,
     #[serde(skip)]
     canvas_widget: CanvasWidget,
     #[serde(skip)]
@@ -47,6 +52,7 @@ impl Default for CognitheonApp {
     fn default() -> Self {
         let graph_resource = GraphResource::default();
         let canvas_resource = CanvasStateResource::default();
+        let history = History::default();
         Self {
             // Example stuff:
             label: "Hello World!".to_owned(),
@@ -54,7 +60,12 @@ impl Default for CognitheonApp {
             // edge_type: EdgeType::Line,
             canvas_resource: canvas_resource.clone(),
             graph_resource: graph_resource.clone(),
-            canvas_widget: CanvasWidget::new(graph_resource.clone(), canvas_resource.clone()),
+            history: history.clone(),
+            canvas_widget: CanvasWidget::new(
+                graph_resource.clone(),
+                canvas_resource.clone(),
+                history.clone(),
+            ),
             particle_system: None,
             #[cfg(not(target_arch = "wasm32"))]
             runtime: Builder::new_multi_thread()
@@ -83,8 +94,14 @@ impl CognitheonApp {
             log::info!("load");
             let mut app: CognitheonApp =
                 eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
-            app.canvas_widget =
-                CanvasWidget::new(app.graph_resource.clone(), app.canvas_resource.clone());
+            // history 不持久化：反序列化后是一个全新的空 History。重建 canvas_widget 时必须用
+            // 同一个 app.history 句柄（clone Arc，§3.1），否则状态机/节点 widget 与菜单/快捷键
+            // 会写到不同的历史栈。
+            app.canvas_widget = CanvasWidget::new(
+                app.graph_resource.clone(),
+                app.canvas_resource.clone(),
+                app.history.clone(),
+            );
             // println!("app: {:?}", app);
             app
         } else {
@@ -495,6 +512,38 @@ impl eframe::App for CognitheonApp {
         // 面板打开时，导航键（↑↓/Enter/Esc）在此 consume，赶在画布 state_manager 之前。
         self.show_command_palette(&ctx);
 
+        // 撤销/重做快捷键：与 Ctrl+P 同范式，在画布 state_manager 渲染前截获并 consume，
+        // 赶在状态机之前（避免 Delete/移动等被状态机当帧再处理）。
+        // 编辑态（EditingNode）内**不拦截**：让 multiline TextEdit 的自带文本撤销（Ctrl+Z）
+        // / 重做（Ctrl+Y / Ctrl+Shift+Z）生效——整图撤销只在非编辑态接管。
+        let editing = self
+            .graph_resource
+            .read_resource(|g| g.get_editing_node().is_some());
+        if !editing {
+            // Ctrl/Cmd+Z = 撤销；Ctrl/Cmd+Y 或 Ctrl/Cmd+Shift+Z = 重做。
+            // 注意：先判 redo（含 Shift+Z），再判 undo（不含 Shift），避免 Shift+Z 被 undo 误吞。
+            let do_redo = ctx.input_mut(|i| {
+                i.consume_key(egui::Modifiers::COMMAND, egui::Key::Y)
+                    || i.consume_key(egui::Modifiers::CTRL, egui::Key::Y)
+                    || i.consume_key(
+                        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                        egui::Key::Z,
+                    )
+                    || i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::Z)
+            });
+            let do_undo = ctx.input_mut(|i| {
+                i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z)
+                    || i.consume_key(egui::Modifiers::CTRL, egui::Key::Z)
+            });
+            if do_redo {
+                if self.history.redo(&self.graph_resource) {
+                    log::debug!("redo");
+                }
+            } else if do_undo && self.history.undo(&self.graph_resource) {
+                log::debug!("undo");
+            }
+        }
+
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
 
@@ -508,7 +557,13 @@ impl eframe::App for CognitheonApp {
                     ui.menu_button("File", |ui| {
                         if ui.button("New").clicked() {
                             log::info!("new");
-                            self.graph_resource.with_resource(|graph| graph.reset());
+                            // 整图被 New 替换：作废任何在途的暂存快照（如正编辑/拖拽中点 New），
+                            // 它对新图无意义，留着会在退出编辑那帧产生多余撤销项。
+                            self.history.discard_staged();
+                            // New = 清空整图，作为一个可撤销单元（撤销后旧图整体复活）。
+                            // history.mutate 在写闭包外先克隆 before 压栈（§3.1），再 reset。
+                            self.history
+                                .mutate(&self.graph_resource, |graph| graph.reset());
                         }
 
                         if ui.button("Save").clicked() {
@@ -557,11 +612,22 @@ impl eframe::App for CognitheonApp {
                                 match crate::persistence::load(&data) {
                                     Ok(doc) => {
                                         let (graph, canvas) = doc.into_parts();
+                                        // 整图被 Load 替换：作废任何在途暂存快照（同 New）。
+                                        self.history.discard_staged();
+                                        // Load = 替换整图，作为一个可撤销单元：先把"载入前"的图压入
+                                        // undo（在替换资源 Arc 之前、写闭包外克隆，§3.1）。撤销 Load
+                                        // 会让旧图整体复活（视图/缩放与 id 计数器不回滚，符合 spec）。
+                                        let before =
+                                            self.graph_resource.read_resource(|g| g.clone());
+                                        self.history.record(before);
                                         self.graph_resource = GraphResource::new(graph);
                                         self.canvas_resource = CanvasStateResource::new(canvas);
+                                        // 复用同一个 history 句柄（§3.1：共享同一真源）——务必传 clone，
+                                        // 否则 Load 后菜单/快捷键与状态机会写到不同历史栈。
                                         self.canvas_widget = CanvasWidget::new(
                                             self.graph_resource.clone(),
                                             self.canvas_resource.clone(),
+                                            self.history.clone(),
                                         );
                                     }
                                     Err(e) => log::error!("load failed: {e}"),
@@ -576,6 +642,44 @@ impl eframe::App for CognitheonApp {
 
                     ui.add_space(16.0);
                 }
+
+                // Edit 菜单：撤销 / 重做（双 target 都可用）。按 can_undo/can_redo 灰显，
+                // 走与快捷键同一入口（self.history），保证两条路径语义一致。
+                //
+                // 编辑态守卫：与快捷键路径『编辑态不接管整图 Ctrl+Z』语义对称——编辑态下整图
+                // 撤销/重做会替换整图并清 editing_node，但 staged 编辑快照仍滞留，下一帧
+                // resolve_on_exit_edit 会把过期 staged 错序 commit 成脏撤销项。故编辑态直接禁用。
+                // §3.1：editing 的读锁在 with_resource/mutate 之外单独取（read_resource 闭包
+                // 作用域 = 锁作用域，求值后锁即释放），不与 history 内部锁/图写锁嵌套重入。
+                let editing = self
+                    .graph_resource
+                    .read_resource(|g| g.get_editing_node().is_some());
+                let can_undo = self.history.can_undo();
+                let can_redo = self.history.can_redo();
+                ui.menu_button("Edit", |ui| {
+                    if ui
+                        .add_enabled(
+                            can_undo && !editing,
+                            egui::Button::new("Undo").shortcut_text("Ctrl+Z"),
+                        )
+                        .clicked()
+                    {
+                        ui.close();
+                        self.history.undo(&self.graph_resource);
+                    }
+                    if ui
+                        .add_enabled(
+                            can_redo && !editing,
+                            egui::Button::new("Redo").shortcut_text("Ctrl+Y"),
+                        )
+                        .clicked()
+                    {
+                        ui.close();
+                        self.history.redo(&self.graph_resource);
+                    }
+                });
+
+                ui.add_space(16.0);
 
                 egui::widgets::global_theme_preference_buttons(ui);
                 // 获取全局主题
@@ -595,7 +699,9 @@ impl eframe::App for CognitheonApp {
                     .on_hover_text("力导向自动布局：相连节点靠近、不相连分散")
                     .clicked()
                 {
-                    let affected = self.graph_resource.with_resource(|graph| {
+                    // 整理布局批量改 Node.position，作为一个可撤销单元：history.mutate 在写闭包外
+                    // 先克隆 before 压栈（§3.1），再跑力导向。撤销可让所有节点回到布局前位置。
+                    let affected = self.history.mutate(&self.graph_resource, |graph| {
                         layout::layout_graph(graph, LayoutParams::default())
                     });
                     log::info!("force-directed layout applied to {affected} nodes");
@@ -603,27 +709,28 @@ impl eframe::App for CognitheonApp {
                     self.zoom_to_fit(&ctx);
                 }
 
-                let mut edge_type = self
+                // EdgeType 是 Graph 的序列化字段（参与 history 的 graph_data_differs 比较），
+                // 故切换必须经 history.mutate 成为一个独立可撤销单元（写闭包外先克隆 before
+                // 压 undo + 清 redo，§3.1 锁安全由 mutate 封装保证），不再直接 with_resource 绕过。
+                // 编辑态禁用该 ComboBox：避免其变更与正在暂存的 edit 快照交叠造成语义错乱
+                // （复用上面已读出的 editing —— 同一帧、读锁早已释放，无重入）。
+                let current_edge_type = self
                     .graph_resource
                     .read_resource(|graph| graph.edge_type.clone());
-                ComboBox::from_label("Edge Type")
-                    .selected_text(format!("{:?}", edge_type))
-                    .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_value(&mut edge_type, EdgeType::Bezier, "Bezier")
-                            .clicked()
-                        {
-                            self.graph_resource
-                                .with_resource(|graph| graph.edge_type = EdgeType::Bezier);
-                        }
-                        if ui
-                            .selectable_value(&mut edge_type, EdgeType::Line, "Line")
-                            .clicked()
-                        {
-                            self.graph_resource
-                                .with_resource(|graph| graph.edge_type = EdgeType::Line);
-                        }
-                    });
+                let mut edge_type = current_edge_type.clone();
+                ui.add_enabled_ui(!editing, |ui| {
+                    ComboBox::from_label("Edge Type")
+                        .selected_text(format!("{:?}", edge_type))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut edge_type, EdgeType::Bezier, "Bezier");
+                            ui.selectable_value(&mut edge_type, EdgeType::Line, "Line");
+                        });
+                });
+                // 仅当新值与当前不同才 mutate：选回同值不产生空撤销项。
+                if edge_type != current_edge_type {
+                    self.history
+                        .mutate(&self.graph_resource, |graph| graph.edge_type = edge_type);
+                }
             });
         });
 

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::graph::node_observer::NodeObserver;
 use crate::graph::render_info::NodeRenderInfo;
 use crate::graph::selection::GraphSelection;
+use crate::history::History;
 use crate::resource::{CanvasStateResource, GraphResource};
 use crate::wikilink;
 use egui::{Id, Sense, Stroke, Widget};
@@ -36,6 +37,8 @@ pub struct NodeWidget {
     pub node_index: NodeIndex,
     pub graph_resource: GraphResource,
     pub canvas_state_resource: CanvasStateResource,
+    /// 撤销/重做历史（构造函数注入）：本 widget 内会改图数据的写入（删点）经它打快照。
+    pub history: History,
     pub observers: Vec<Arc<dyn NodeObserver>>,
     // pub graph: &'a mut Graph,
     // pub canvas_state: &'a mut CanvasState,
@@ -56,11 +59,13 @@ impl NodeWidget {
         node_index: NodeIndex,
         graph_resource: GraphResource,
         canvas_state_resource: CanvasStateResource,
+        history: History,
     ) -> Self {
         Self {
             node_index,
             graph_resource,
             canvas_state_resource,
+            history,
             observers: vec![],
         }
     }
@@ -104,14 +109,19 @@ impl NodeWidget {
         }
 
         if ui.input(|i| i.key_pressed(egui::Key::Backspace) || i.key_pressed(egui::Key::Delete)) {
-            self.graph_resource.with_resource(|graph| {
-                if let GraphSelection::Node(selected_nodes) = &graph.selected {
-                    if selected_nodes.contains(&self.node_index) && graph.editing_node.is_none() {
-                        log::debug!("node deleted: {:?}", self.node_index);
-                        graph.remove_node(self.node_index);
-                    }
-                }
+            // 先在写闭包外判定是否真要删，避免无条件打快照（§3.1：克隆在写闭包外单独 read）。
+            let should_delete = self.graph_resource.read_resource(|graph| {
+                matches!(&graph.selected, GraphSelection::Node(ns) if ns.contains(&self.node_index))
+                    && graph.editing_node.is_none()
+                    && graph.get_node(self.node_index).is_some()
             });
+            if should_delete {
+                log::debug!("node deleted: {:?}", self.node_index);
+                // 删点（连同其边）经 history 打一次快照，撤销可让节点连边复活（§3.3 索引稳定）。
+                self.history.mutate(&self.graph_resource, |graph| {
+                    graph.remove_node(self.node_index);
+                });
+            }
         }
 
         // Ctrl + Enter

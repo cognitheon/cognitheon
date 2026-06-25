@@ -2,6 +2,7 @@ use egui::Pos2;
 use petgraph::graph::NodeIndex;
 
 use crate::{
+    history::History,
     input::{input_state::InputState, state_manager::InputStateManager},
     resource::{CanvasStateResource, GraphResource},
     ui::temp_edge::TempEdge,
@@ -24,12 +25,14 @@ impl CanvasWidget {
     pub fn new(
         graph_resource: GraphResource,
         canvas_state_resource: CanvasStateResource,
+        history: History,
         // particle_system_resource: ParticleSystemResource,
     ) -> Self {
         Self {
             input_manager: InputStateManager::new(
                 graph_resource.clone(),
                 canvas_state_resource.clone(),
+                history,
             ),
             input_state: InputState::Idle,
             temp_edge: None,

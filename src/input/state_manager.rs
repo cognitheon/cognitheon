@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use crate::{
     gpu_render::particle::particle_callback::ParticleCallback,
     graph::render_info::NodeRenderInfo,
+    history::History,
     input::{events::InputTarget, input_state::InputState},
     resource::{CanvasStateResource, GraphResource},
 };
@@ -23,6 +24,9 @@ pub struct InputContext {
 
     /// 图形资源
     pub graph_resource: GraphResource,
+
+    /// 撤销/重做历史（运行态，构造函数注入；所有会改图数据的写入经它打快照）。
+    pub history: History,
 
     /// 当前鼠标位置（屏幕坐标）
     pub current_mouse_pos: Pos2,
@@ -44,10 +48,15 @@ pub struct InputContext {
 }
 
 impl InputContext {
-    pub fn new(graph_resource: GraphResource, canvas_state_resource: CanvasStateResource) -> Self {
+    pub fn new(
+        graph_resource: GraphResource,
+        canvas_state_resource: CanvasStateResource,
+        history: History,
+    ) -> Self {
         Self {
             canvas_state_resource,
             graph_resource,
+            history,
             current_mouse_pos: Pos2::ZERO,
             prev_mouse_pos: Pos2::ZERO,
             modifiers: Modifiers::NONE,
@@ -147,10 +156,14 @@ pub struct InputStateManager {
 }
 
 impl InputStateManager {
-    pub fn new(graph_resource: GraphResource, canvas_state_resource: CanvasStateResource) -> Self {
+    pub fn new(
+        graph_resource: GraphResource,
+        canvas_state_resource: CanvasStateResource,
+        history: History,
+    ) -> Self {
         Self {
             current_state: InputState::Idle,
-            context: InputContext::new(graph_resource, canvas_state_resource),
+            context: InputContext::new(graph_resource, canvas_state_resource, history),
             last_target: None,
             prev_editing_node: None,
         }
@@ -216,6 +229,12 @@ impl InputStateManager {
                         exited,
                     );
                 });
+
+                // 退出编辑 = 一个撤销单元的收尾：把进入编辑时暂存的快照按"图数据是否真变了"
+                // 提交（编辑期文本改动 + 本次 resolve 一起算一步）或丢弃（双击进编辑没改就退出）。
+                // current 在写闭包外单独 read 克隆（§3.1：绝不在写闭包内重入读同资源）。
+                let after = self.context.graph_resource.read_resource(|g| g.clone());
+                self.context.history.commit_staged_if_changed(&after);
             }
         }
 
@@ -395,6 +414,9 @@ impl InputStateManager {
                         .graph_resource
                         .read_resource(|graph| graph.get_selected_nodes());
 
+                    // 进入拖拽前暂存一份快照（拖拽 = 一个撤销单元；§3.1：写闭包外单独 read 克隆）。
+                    // release 时若节点确有位移则 commit，否则 discard（原地点击不产生空撤销项）。
+                    self.stage_drag_snapshot();
                     self.transition_to(InputState::DraggingNode {
                         node_index: *node_index,
                         start_pos: self.context.current_mouse_pos,
@@ -408,6 +430,8 @@ impl InputStateManager {
                         graph.select_node(*node_index);
                     });
 
+                    // 进入拖拽前暂存一份快照（同上）。
+                    self.stage_drag_snapshot();
                     // 开始拖动节点
                     self.transition_to(InputState::DraggingNode {
                         node_index: *node_index,
@@ -496,7 +520,8 @@ impl InputStateManager {
                 }
             }
             InputState::DraggingNode { .. } => {
-                // 结束节点拖动
+                // 结束节点拖动：把进入拖拽时暂存的快照按"是否真的移动了"提交或丢弃。
+                self.finalize_drag_snapshot();
                 self.transition_to(InputState::Idle);
             }
             InputState::Selecting {
@@ -655,6 +680,11 @@ impl InputStateManager {
     fn handle_escape_key(&mut self) {
         // 几乎任何状态下，按下Escape都应该回到空闲状态
         if !matches!(self.current_state, InputState::Idle) {
+            // 拖拽中途被 Escape 打断：节点位移已落到图上（不回滚），把暂存快照按是否真移动了提交/丢弃，
+            // 避免暂存快照泄漏到下一次操作（§3.4：每个拖拽态收尾不得泄漏）。
+            if matches!(self.current_state, InputState::DraggingNode { .. }) {
+                self.finalize_drag_snapshot();
+            }
             self.transition_to(InputState::Idle);
 
             // 清除选择
@@ -672,26 +702,36 @@ impl InputStateManager {
         ) {
             return;
         }
-        // 删除选中的节点
-        self.context.graph_resource.with_resource(|graph| {
-            let nodes_to_remove =
-                if let crate::graph::selection::GraphSelection::Node(nodes) = &graph.selected {
-                    nodes.clone() // 克隆节点列表
-                } else {
-                    Vec::new()
-                };
 
-            for node_index in nodes_to_remove {
-                graph.remove_node(node_index);
+        // 先在写闭包外读出待删节点；为空则不打快照（避免空选下按 Delete 产生空撤销项）。
+        let nodes_to_remove = self.context.graph_resource.read_resource(|graph| {
+            if let crate::graph::selection::GraphSelection::Node(nodes) = &graph.selected {
+                nodes.clone()
+            } else {
+                Vec::new()
             }
-
-            graph.selected.clear();
         });
+        if nodes_to_remove.is_empty() {
+            return;
+        }
+
+        // 删除选中节点（连同其边）——经 history 打一次快照，撤销可整组复活（§3.3 索引稳定）。
+        self.context
+            .history
+            .mutate(&self.context.graph_resource, |graph| {
+                for node_index in nodes_to_remove {
+                    graph.remove_node(node_index);
+                }
+                graph.selected.clear();
+            });
     }
 
     fn handle_double_click(&mut self, _ui: &mut egui::Ui, target: &InputTarget) {
         match target {
             InputTarget::Node(node_index) => {
+                // 进入编辑前暂存快照：把"整段编辑期文本改动 + 退出触发的 resolve"合并为一个撤销
+                // 单元（spec）。退出编辑由 resolve_on_exit_edit 统一 commit/discard（§3.4 收口）。
+                self.stage_edit_snapshot();
                 // 双击节点开始编辑
                 self.context.graph_resource.with_resource(|graph| {
                     graph.set_editing_node(Some(*node_index));
@@ -701,7 +741,10 @@ impl InputStateManager {
                 });
             }
             InputTarget::Canvas => {
-                // 双击画布创建新节点
+                // 双击画布创建新节点。进入编辑前暂存快照：把"建点 + 编辑期改动 + 退出 resolve"
+                // 合并为一个撤销单元——一次撤销既删掉新建的空节点也撤销其后续编辑。
+                self.stage_edit_snapshot();
+
                 let canvas_pos = self
                     .context
                     .screen_to_canvas(self.context.current_mouse_pos);
@@ -765,6 +808,29 @@ impl InputStateManager {
     }
 
     // 辅助方法
+
+    /// 进入节点拖拽前暂存一份"变更前"整图快照（撤销/重做）。
+    ///
+    /// 在写闭包**之外**单独 `read_resource` 克隆 before（§3.1：绝不在写闭包内重入读同资源）。
+    /// `stage` 自身幂等（已有暂存时忽略），故同一次拖拽里即便重复调用也只记一份起点。
+    fn stage_drag_snapshot(&self) {
+        let before = self.context.graph_resource.read_resource(|g| g.clone());
+        self.context.history.stage(before);
+    }
+
+    /// 进入编辑前暂存一份"变更前"整图快照（编辑期改动 + 退出 resolve 合并为一个撤销单元）。
+    /// 与 [`Self::stage_drag_snapshot`] 同构，单独抽出以表意。
+    fn stage_edit_snapshot(&self) {
+        let before = self.context.graph_resource.read_resource(|g| g.clone());
+        self.context.history.stage(before);
+    }
+
+    /// 节点拖拽结束时收尾暂存快照：图数据确有改变（节点真的移动了）则提交为一个撤销单元，
+    /// 否则丢弃（原地点击未拖动不产生空撤销项）。current 在写闭包外单独 read 克隆（§3.1）。
+    fn finalize_drag_snapshot(&self) {
+        let after = self.context.graph_resource.read_resource(|g| g.clone());
+        self.context.history.commit_staged_if_changed(&after);
+    }
 
     fn update_selection_preview(
         &mut self,
@@ -935,10 +1001,12 @@ impl InputStateManager {
                 self.context.canvas_state_resource.clone(),
             );
 
-            // 添加到图中
-            self.context.graph_resource.with_resource(|graph| {
-                graph.add_edge(edge);
-            });
+            // 添加到图中——经 history 打一次快照（连边是一个独立撤销单元）。
+            self.context
+                .history
+                .mutate(&self.context.graph_resource, |graph| {
+                    graph.add_edge(edge);
+                });
         }
     }
 
@@ -956,10 +1024,12 @@ impl InputStateManager {
             note: String::new(),
         };
 
-        // 添加节点并创建边
-        self.context.graph_resource.with_resource(|graph| {
-            graph.add_node_with_edge(node, source, self.context.canvas_state_resource.clone());
-        });
+        // 添加节点并创建边——经 history 打一次快照（建点+连边是一个独立撤销单元）。
+        self.context
+            .history
+            .mutate(&self.context.graph_resource, |graph| {
+                graph.add_node_with_edge(node, source, self.context.canvas_state_resource.clone());
+            });
     }
 
     pub fn draw_particle_system(&self, ui: &mut egui::Ui, screen_rect: egui::Rect) {

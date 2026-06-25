@@ -33,6 +33,7 @@ impl Widget for &mut CanvasWidget {
             ui,
             self.graph_resource.clone(),
             self.canvas_state_resource.clone(),
+            self.input_manager.context.history.clone(),
         );
         // });
 

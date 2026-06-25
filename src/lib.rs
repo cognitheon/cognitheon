@@ -4,6 +4,7 @@ pub mod colors;
 pub mod geometry;
 pub mod gpu_render;
 pub mod graph;
+pub mod history;
 pub mod input;
 pub mod persistence;
 pub mod resource;
