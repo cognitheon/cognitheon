@@ -10,7 +10,8 @@
 //!   new <x> <y> [title...]      新建节点，返回 `node <index> <id>`
 //!   title <index> <title...>    设标题（Node.text）
 //!   body <index> <body...>      设正文（Node.note），支持 `\n`
-//!   get <index>                 打印该节点 id/pos/title/body
+//!   alias <index> <names...>    设别名（Node.aliases），逗号分隔、trim、去空
+//!   get <index>                 打印该节点 id/pos/title/body/aliases
 //!   rm <index>                  删除节点
 //!   count                       打印 `nodes <n> edges <m>`
 //!   dump                        打印全部节点与边
@@ -80,7 +81,7 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
         "quit" | "exit" => Ok(None),
         "help" => Ok(Some(
             [
-                "commands: new <x> <y> [title] | title <i> <t> | body <i> <b> | get <i>",
+                "commands: new <x> <y> [title] | title <i> <t> | body <i> <b> | alias <i> <names> | get <i>",
                 "          rm <i> | count | dump | save <path> | load <path> | reset | quit",
                 "          link <i> <j> | parse <i> | backlinks <i> | search <q> | find <title> | orphans",
             ]
@@ -100,6 +101,7 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
                 position: egui::pos2(x, y),
                 text: title,
                 note: String::new(),
+                aliases: Vec::new(),
             });
             Ok(Some(vec![format!("node {} {}", idx.index(), id)]))
         }
@@ -122,6 +124,23 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
             Ok(Some(vec!["ok".into()]))
         }
 
+        "alias" => {
+            let mut it = rest.splitn(2, ' ');
+            let idx = parse_index(it.next().unwrap_or(""))?;
+            // 逗号分隔、trim、去空 —— 与编辑态 UI 同口径。
+            let aliases: Vec<String> = it
+                .next()
+                .unwrap_or("")
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect();
+            let node = s.graph.get_node_mut(idx).ok_or("no such node")?;
+            node.aliases = aliases;
+            Ok(Some(vec![format!("ok aliases {}", node.aliases.len())]))
+        }
+
         "get" => {
             let idx = parse_index(rest)?;
             let node = s.graph.get_node(idx).ok_or("no such node")?;
@@ -130,6 +149,7 @@ fn dispatch(s: &mut Session, line: &str) -> Result<Option<Vec<String>>, String> 
                 format!("pos {} {}", node.position.x, node.position.y),
                 format!("title {}", escape(&node.text)),
                 format!("body {}", escape(&node.note)),
+                format!("aliases {}", escape(&node.aliases.join(", "))),
             ]))
         }
 

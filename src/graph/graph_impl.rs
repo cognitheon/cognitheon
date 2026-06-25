@@ -285,6 +285,7 @@ mod tests {
             position: egui::pos2(0.0, 0.0),
             text: text.to_owned(),
             note: String::new(),
+            aliases: Vec::new(),
         }
     }
 

@@ -171,6 +171,7 @@ mod tests {
             position: egui::pos2(x, y),
             text: title.to_owned(),
             note: body.to_owned(),
+            aliases: Vec::new(),
         }
     }
 

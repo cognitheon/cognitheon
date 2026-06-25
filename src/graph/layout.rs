@@ -334,6 +334,7 @@ mod tests {
                 position: egui::pos2(0.0, 0.0),
                 text: (*t).to_owned(),
                 note: String::new(),
+                aliases: Vec::new(),
             });
             if let Some(p) = prev {
                 let pp = g.get_node(p).unwrap().position;

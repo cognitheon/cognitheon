@@ -36,12 +36,31 @@ pub fn parse_links(text: &str) -> Vec<String> {
     out
 }
 
-/// 按精确标题查找第一个匹配的节点。
+/// 节点是否以 `title` 命名：标题精确相等，**或**别名集里有精确相等项。
+///
+/// 别名（`Node.aliases`）与 `text` 一视同仁地参与寻址（PKM aliases，同 Obsidian）。
+/// 这是别名寻址的**唯一判定点**——`find_by_title` / `resolve_links` 的目标匹配 /
+/// `backlinks_with_context` 全部经它，单点改造即全链路一致。
+fn node_matches_title(node: &Node, title: &str) -> bool {
+    node.text == title || node.aliases.iter().any(|a| a == title)
+}
+
+/// 按标题查找第一个匹配的节点：**text 优先、alias 次之**。
+///
+/// 先扫 `text == title` 的首个；无则扫别名命中（`aliases.contains(title)`）的首个。
+/// 保持"取第一个"的歧义语义（多个同名/同别名只连第一个）。寻址在此收口——
+/// resolve_links / 读模式跳转 / 自动补全 / 反向链接全经它，故别名全链路生效。
 pub fn find_by_title(graph: &Graph, title: &str) -> Option<NodeIndex> {
     graph
         .graph
         .node_indices()
         .find(|&i| graph.graph[i].text == title)
+        .or_else(|| {
+            graph
+                .graph
+                .node_indices()
+                .find(|&i| graph.graph[i].aliases.iter().any(|a| a == title))
+        })
 }
 
 /// [`resolve_links`] 的结果：本次新建的节点与新建的边数。
@@ -79,17 +98,18 @@ pub fn resolve_links(
     // 1. 解析正文每个标题为目标节点（缺失则新建），得到本次正文期望连到的目标集合。
     let mut desired: Vec<NodeIndex> = Vec::new();
     for (i, title) in parse_links(&body).into_iter().enumerate() {
-        let matches: Vec<NodeIndex> = graph
-            .graph
-            .node_indices()
-            .filter(|&idx| graph.graph[idx].text == title)
-            .collect();
-
-        let target = if let Some(&first) = matches.first() {
-            if matches.len() > 1 {
+        // 经 find_by_title 收口寻址（text 优先、alias 次之），别名也能复用既有节点。
+        let target = if let Some(first) = find_by_title(graph, &title) {
+            // 歧义判定与寻址同口径：统计所有"标题或别名命中"的节点；多于一个则警示
+            // （仍连到 find_by_title 选出的第一个）。
+            let match_count = graph
+                .graph
+                .node_indices()
+                .filter(|&idx| node_matches_title(&graph.graph[idx], &title))
+                .count();
+            if match_count > 1 {
                 log::warn!(
-                    "wikilink: 标题 \"{title}\" 匹配到 {} 个节点，连接到第一个（其余忽略）",
-                    matches.len()
+                    "wikilink: 标题 \"{title}\" 匹配到 {match_count} 个节点，连接到第一个（其余忽略）"
                 );
                 outcome.ambiguous.push(title.clone());
             }
@@ -103,6 +123,7 @@ pub fn resolve_links(
                 position: pos,
                 text: title,
                 note: String::new(),
+                aliases: Vec::new(),
             });
             outcome.created_nodes.push(idx);
             idx
@@ -145,13 +166,25 @@ pub struct Backlink {
 
 /// 基于正文文本的反向链接（"被谁引用 + 原话"）——PKM "linked references" 的数据源。
 ///
-/// 找出所有正文里出现 `[[target 的标题]]` 的节点，并附上包含该链接的上下文行。
-/// 以**当前标题**匹配（target 改名后旧链接不再命中，与 Obsidian 一致）；空标题节点无反链。
+/// 找出所有正文里出现 `[[target 的标题]]` **或** `[[target 的任一别名]]` 的节点，并附上
+/// 包含该链接的上下文行。以**当前标题/别名**匹配（target 改名后旧链接不再命中，与 Obsidian
+/// 一致）；标题与别名全为空的节点无反链。
 pub fn backlinks_with_context(graph: &Graph, target: NodeIndex) -> Vec<Backlink> {
-    let target_title = match graph.get_node(target) {
-        Some(n) if !n.text.is_empty() => n.text.clone(),
-        _ => return Vec::new(),
+    // target 的全部寻址名：标题 ∪ 别名（去空）。任一被 [[…]] 引用即算反链。
+    let target_names: Vec<String> = match graph.get_node(target) {
+        Some(n) => {
+            let mut names = Vec::new();
+            if !n.text.is_empty() {
+                names.push(n.text.clone());
+            }
+            names.extend(n.aliases.iter().filter(|a| !a.is_empty()).cloned());
+            names
+        }
+        None => return Vec::new(),
     };
+    if target_names.is_empty() {
+        return Vec::new();
+    }
     let mut out = Vec::new();
     for src_idx in graph.graph.node_indices() {
         if src_idx == target {
@@ -161,7 +194,11 @@ pub fn backlinks_with_context(graph: &Graph, target: NodeIndex) -> Vec<Backlink>
         let contexts: Vec<String> = src
             .note
             .lines()
-            .filter(|line| parse_links(line).iter().any(|t| t == &target_title))
+            .filter(|line| {
+                parse_links(line)
+                    .iter()
+                    .any(|t| target_names.iter().any(|name| name == t))
+            })
             .map(|line| line.trim().to_owned())
             .collect();
         if !contexts.is_empty() {
@@ -234,7 +271,10 @@ pub fn orphan_nodes(graph: &Graph) -> Vec<NodeIndex> {
         .collect()
 }
 
-/// 全文搜索：标题或正文包含 `query`（**大小写不敏感**的子串匹配）的节点，按节点索引顺序返回。
+/// 全文搜索：标题、**别名**或正文包含 `query`（**大小写不敏感**的子串匹配）的节点，
+/// 按节点索引顺序返回。
+///
+/// 纳入别名：`[[别名]]`（或别名本身的关键词）在命令面板能搜到对应节点——与别名寻址语义一致。
 pub fn search(graph: &Graph, query: &str) -> Vec<NodeIndex> {
     if query.is_empty() {
         return Vec::new();
@@ -245,7 +285,9 @@ pub fn search(graph: &Graph, query: &str) -> Vec<NodeIndex> {
         .node_indices()
         .filter(|&i| {
             let n = &graph.graph[i];
-            n.text.to_lowercase().contains(&q) || n.note.to_lowercase().contains(&q)
+            n.text.to_lowercase().contains(&q)
+                || n.note.to_lowercase().contains(&q)
+                || n.aliases.iter().any(|a| a.to_lowercase().contains(&q))
         })
         .collect()
 }
@@ -265,6 +307,7 @@ mod tests {
                 position: egui::pos2(0.0, 0.0),
                 text: (*t).to_owned(),
                 note: String::new(),
+                aliases: Vec::new(),
             });
         }
         (g, canvas)
@@ -354,6 +397,7 @@ mod tests {
             position: egui::pos2(0.0, 0.0),
             text: "源笔记".to_owned(),
             note: "无关的一行\n这里提到 [[目标]]，很重要\n又一行写了 [[目标]] 再次".to_owned(),
+            aliases: Vec::new(),
         });
 
         let bls = backlinks_with_context(&g, target);
@@ -648,5 +692,131 @@ mod tests {
         assert!(out.created_nodes.is_empty(), "Dup 已存在不该新建");
         assert_eq!(out.ambiguous, vec!["Dup".to_string()], "同名应被标记为歧义");
         assert_eq!(out.created_edges, 1, "仍应连到第一个 Dup");
+    }
+
+    // ===== 节点别名 aliases =====
+
+    /// 设置节点别名（逗号分隔语义已在 UI/headless 层处理，这里直接给 Vec）。
+    fn set_aliases(g: &mut Graph, idx: NodeIndex, aliases: &[&str]) {
+        g.get_node_mut(idx).unwrap().aliases = aliases.iter().map(|s| (*s).to_owned()).collect();
+    }
+
+    #[test]
+    fn find_by_title_resolves_alias() {
+        let (mut g, _c) = graph_with(&["机器学习"]);
+        let ml = find_by_title(&g, "机器学习").unwrap();
+        set_aliases(&mut g, ml, &["ML", "machine learning"]);
+        // 别名命中同一节点
+        assert_eq!(find_by_title(&g, "ML"), Some(ml));
+        assert_eq!(find_by_title(&g, "machine learning"), Some(ml));
+        // 标题仍命中
+        assert_eq!(find_by_title(&g, "机器学习"), Some(ml));
+        // 无关词不命中
+        assert!(find_by_title(&g, "深度学习").is_none());
+    }
+
+    #[test]
+    fn find_by_title_prefers_text_over_alias() {
+        // 节点 A 的标题是 "X"；节点 B 的别名也是 "X"。text 优先 → 命中 A（先建的）。
+        let (mut g, _c) = graph_with(&["X", "B"]);
+        let a = find_by_title(&g, "X").unwrap();
+        let b = find_by_title(&g, "B").unwrap();
+        set_aliases(&mut g, b, &["X"]);
+        assert_eq!(
+            find_by_title(&g, "X"),
+            Some(a),
+            "标题精确匹配优先于别名匹配"
+        );
+    }
+
+    #[test]
+    fn resolve_links_via_alias_reuses_node_no_new_node() {
+        let (mut g, canvas) = graph_with(&["目标", "源"]);
+        let target = find_by_title(&g, "目标").unwrap();
+        let src = find_by_title(&g, "源").unwrap();
+        set_aliases(&mut g, target, &["alias-of-target"]);
+
+        g.get_node_mut(src).unwrap().note = "[[alias-of-target]]".to_owned();
+        let out = resolve_links(&mut g, &canvas, src);
+        assert!(out.created_nodes.is_empty(), "别名命中既有节点，不应新建");
+        assert_eq!(out.created_edges, 1, "应连一条 src->target 的 wiki 边");
+        assert!(g.edge_exists(src, target), "边应指向别名所属节点");
+    }
+
+    #[test]
+    fn alias_and_text_to_same_node_is_idempotent_single_edge() {
+        // 幂等关键用例：note 同时含 [[标题]] 与 [[别名]] 指向同一节点 →
+        // 只连一条边，连续两次 resolve 边集一致（desired 以 NodeIndex 去重）。
+        let (mut g, canvas) = graph_with(&["目标", "源"]);
+        let target = find_by_title(&g, "目标").unwrap();
+        let src = find_by_title(&g, "源").unwrap();
+        set_aliases(&mut g, target, &["TGT"]);
+
+        g.get_node_mut(src).unwrap().note = "见 [[目标]] 又见 [[TGT]]".to_owned();
+        let first = resolve_links(&mut g, &canvas, src);
+        assert!(first.created_nodes.is_empty(), "目标已存在，不应新建节点");
+        assert_eq!(
+            first.created_edges, 1,
+            "[[目标]] 与 [[TGT]] 同指一节点，只应连一条边"
+        );
+        assert_eq!(g.graph.edges(src).count(), 1, "src 只有一条出边");
+
+        // 第二次 resolve：幂等，无新增、边集不抖动
+        let edges_before = g.graph.edge_count();
+        let second = resolve_links(&mut g, &canvas, src);
+        assert_eq!(second.created_edges, 0, "第二次不应新建边（幂等）");
+        assert!(second.created_nodes.is_empty(), "第二次不应新建节点");
+        assert_eq!(g.graph.edge_count(), edges_before, "边集应稳定");
+        assert_eq!(g.graph.edges(src).count(), 1, "src 仍只有一条出边");
+    }
+
+    #[test]
+    fn backlinks_with_context_matches_via_alias() {
+        let (mut g, _c) = graph_with(&["目标", "源"]);
+        let target = find_by_title(&g, "目标").unwrap();
+        let src = find_by_title(&g, "源").unwrap();
+        set_aliases(&mut g, target, &["别名甲"]);
+        // 源正文只用别名引用目标
+        g.get_node_mut(src).unwrap().note = "这里引用了 [[别名甲]]，很重要".to_owned();
+
+        let bls = backlinks_with_context(&g, target);
+        assert_eq!(bls.len(), 1, "经别名也应识别为反向链接");
+        assert_eq!(bls[0].source, src);
+        assert!(bls[0].contexts[0].contains("很重要"));
+    }
+
+    #[test]
+    fn search_matches_alias() {
+        let (mut g, _c) = graph_with(&["机器学习", "无关"]);
+        let ml = find_by_title(&g, "机器学习").unwrap();
+        set_aliases(&mut g, ml, &["ML"]);
+        // 别名命中（大小写不敏感）
+        assert_eq!(search(&g, "ml").len(), 1, "搜别名应命中该节点");
+        assert_eq!(search(&g, "ML"), vec![ml]);
+        // 标题/正文仍各自命中
+        assert_eq!(search(&g, "机器").len(), 1);
+    }
+
+    #[test]
+    fn old_archive_node_without_aliases_field_loads_empty() {
+        // 旧 .cnt（无 aliases 字段）兼容验证：仿 EdgeOrigin old_archive 范式——
+        // 序列化真实 Node 再剥掉 `aliases` 字段，反序列化应默认空 Vec、不崩。
+        let (g, _c) = graph_with(&["A"]);
+        let a = find_by_title(&g, "A").unwrap();
+        let node = g.get_node(a).unwrap().clone();
+
+        let mut value: serde_json::Value = serde_json::to_value(&node).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("aliases")
+            .expect("新节点序列化应含 aliases 字段");
+
+        let old_node: Node = serde_json::from_value(value).expect("旧档节点应能反序列化");
+        assert!(
+            old_node.aliases.is_empty(),
+            "缺 aliases 字段应默认空 Vec（向后兼容）"
+        );
+        assert_eq!(old_node.text, "A", "其余字段应保真");
     }
 }

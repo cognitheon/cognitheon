@@ -537,6 +537,33 @@ impl NodeWidget {
             });
         }
 
+        // 别名单行（逗号分隔）：`[[别名]]` 与 `[[标题]]` 同样寻址到本节点（见 wikilink::find_by_title）。
+        // 读出当前 aliases 拼成逗号分隔串作编辑缓冲（§3.1：read 闭包内即释放锁）；改动时解析回
+        // Vec（按逗号切、trim、去空）写回 n.aliases。aliases 属图数据变更，落在编辑态快照内，
+        // 退出编辑经 resolve_on_exit_edit → commit_staged_if_changed 一并提交为可撤销单元。
+        let mut a = self
+            .graph_resource
+            .read_resource(|g| g.get_node(self.node_index).map(|n| n.aliases.join(", ")))
+            .unwrap_or_default();
+        let ar = ui.add(
+            egui::TextEdit::singleline(&mut a)
+                .hint_text("别名（逗号分隔）")
+                .desired_width(f32::INFINITY),
+        );
+        if ar.changed() {
+            let aliases: Vec<String> = a
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect();
+            self.graph_resource.with_resource(|g| {
+                if let Some(n) = g.get_node_mut(self.node_index) {
+                    n.aliases = aliases;
+                }
+            });
+        }
+
         ui.separator();
 
         let mut b = body.to_owned();
@@ -572,16 +599,20 @@ impl NodeWidget {
 
         // Markdown 源码语法高亮（含 [[双链]] 高亮）。
         let md_colors = crate::ui::md_highlight::MdColors::from_visuals(ui.visuals());
-        // 悬空双链指示：预计算"当前图中已存在的非空标题集合"，按值 capture 进 layouter 闭包。
-        // §3.1：取图锁只发生在此 read_resource 闭包内（随即释放）；layouter 闭包内只查这份已
-        // 克隆的 HashSet、绝不再触图锁（layouter 在 egui 布局期被回调，闭包内取 graph 锁有重入
-        // 风险）。md_highlight 据此把指向"不存在标题"的 [[X]] 渲染为悬空色（resolve 退出编辑时
-        // 会自动补建该节点，故此为瞬态视觉提示，不改 resolve 自动建点模型、不改写 note 原文）。
+        // 悬空双链指示：预计算"当前图中已存在的非空寻址名集合（标题 ∪ 别名）"，按值 capture
+        // 进 layouter 闭包。纳入别名后，指向某节点别名的 [[别名]] 不再被误判为悬空（与 find_by_title
+        // 寻址口径一致）。§3.1：取图锁只发生在此 read_resource 闭包内（随即释放）；layouter 闭包内
+        // 只查这份已克隆的 HashSet、绝不再触图锁（layouter 在 egui 布局期被回调，闭包内取 graph 锁
+        // 有重入风险）。md_highlight 据此把指向"不存在标题/别名"的 [[X]] 渲染为悬空色（resolve
+        // 退出编辑时会自动补建该节点，故此为瞬态视觉提示，不改 resolve 自动建点模型、不改写 note 原文）。
         let known_titles: std::collections::HashSet<String> =
             self.graph_resource.read_resource(|g| {
                 g.graph
                     .node_indices()
-                    .map(|i| g.graph[i].text.clone())
+                    .flat_map(|i| {
+                        let n = &g.graph[i];
+                        std::iter::once(n.text.clone()).chain(n.aliases.iter().cloned())
+                    })
                     .filter(|t| !t.is_empty())
                     .collect()
             });
@@ -688,16 +719,22 @@ impl NodeWidget {
         }
         let query = frag.to_lowercase();
 
-        // 匹配的已有标题（排除自身、去重、最多 8 条）
+        // 匹配的已有标题与别名（排除自身、去重、最多 8 条）。
+        // 别名纳入候选：别名也经 find_by_title 寻址，故补全为 `[[别名]]` 同样能连到该节点，
+        // 与 resolve/搜索/反链的别名语义一致。标题与别名一视同仁、共享同一去重集与 8 条上限。
         let suggestions = self.graph_resource.read_resource(|g| {
             let mut seen = std::collections::BTreeSet::new();
             g.graph
                 .node_indices()
                 .filter(|&i| i != self.node_index)
-                .filter_map(|i| {
-                    let t = g.graph[i].text.clone();
-                    (!t.is_empty() && t.to_lowercase().contains(&query) && seen.insert(t.clone()))
-                        .then_some(t)
+                .flat_map(|i| {
+                    let n = &g.graph[i];
+                    std::iter::once(n.text.clone()).chain(n.aliases.iter().cloned())
+                })
+                .filter(|name| {
+                    !name.is_empty()
+                        && name.to_lowercase().contains(&query)
+                        && seen.insert(name.clone())
                 })
                 .take(8)
                 .collect::<Vec<_>>()

@@ -408,6 +408,7 @@ impl InputStateManager {
                 position: req.canvas_pos,
                 text: String::new(),
                 note: String::new(),
+                aliases: Vec::new(),
             };
             let node_index = self.context.graph_resource.with_resource(|graph| {
                 let idx = graph.add_node(node);
@@ -994,6 +995,7 @@ impl InputStateManager {
                     position: canvas_pos,
                     text: String::new(),
                     note: String::new(),
+                    aliases: Vec::new(),
                 };
 
                 let node_index = self.context.graph_resource.with_resource(|graph| {
@@ -1258,6 +1260,7 @@ impl InputStateManager {
             position: canvas_pos,
             text: String::new(),
             note: String::new(),
+            aliases: Vec::new(),
         };
 
         // 添加节点并创建边——经 history 打一次快照（建点+连边是一个独立撤销单元）。
