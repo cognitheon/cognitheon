@@ -189,6 +189,26 @@ pub fn backlinks(graph: &Graph, target: NodeIndex) -> Vec<NodeIndex> {
     seen
 }
 
+/// 从正文里取一行摘要（命令面板/搜索结果用）。
+///
+/// `query` 非空：取**首个（大小写不敏感）包含 `query` 的行**（trim 后），让用户一眼看到命中所在；
+/// 没有命中行（例如只命中了标题）或 `query` 为空：回退首个非空行。
+/// 结果按 **char** 截断到 80 个字符（中文安全，绝不裸 byte slice）。空正文返回空串。
+pub fn snippet_around(note: &str, query: &str) -> String {
+    let q = query.trim().to_lowercase();
+    let pick = if q.is_empty() {
+        None
+    } else {
+        note.lines()
+            .map(str::trim)
+            .find(|l| l.to_lowercase().contains(&q))
+    };
+    let line = pick
+        .or_else(|| note.lines().map(str::trim).find(|l| !l.is_empty()))
+        .unwrap_or("");
+    line.chars().take(80).collect()
+}
+
 /// 全文搜索：标题或正文包含 `query`（**大小写不敏感**的子串匹配）的节点，按节点索引顺序返回。
 pub fn search(graph: &Graph, query: &str) -> Vec<NodeIndex> {
     if query.is_empty() {
@@ -337,6 +357,40 @@ mod tests {
         let (g, _c) = graph_with(&["Hello World"]);
         assert_eq!(search(&g, "hello").len(), 1);
         assert_eq!(search(&g, "WORLD").len(), 1);
+    }
+
+    #[test]
+    fn snippet_prefers_matching_line() {
+        let note = "第一行无关\n这里有关键词在中间\n第三行";
+        // 命中行优先（大小写不敏感）
+        assert_eq!(snippet_around(note, "关键词"), "这里有关键词在中间");
+        assert_eq!(
+            snippet_around("alpha\nBETA here\ngamma", "beta"),
+            "BETA here"
+        );
+    }
+
+    #[test]
+    fn snippet_falls_back_to_first_nonempty_line() {
+        // 无命中行（只命中标题等场景）→ 回退首个非空行
+        assert_eq!(snippet_around("\n  \n首行内容\n次行", "不存在"), "首行内容");
+        // 空 query → 回退首个非空行
+        assert_eq!(snippet_around("\n首个非空\n", ""), "首个非空");
+    }
+
+    #[test]
+    fn snippet_empty_note_is_empty() {
+        assert_eq!(snippet_around("", "x"), "");
+        assert_eq!(snippet_around("   \n  ", "x"), "");
+    }
+
+    #[test]
+    fn snippet_truncates_by_char_not_byte() {
+        // 全中文 100 字：char 截断到 80，不在多字节中间切断（不 panic）
+        let line: String = "字".repeat(100);
+        let out = snippet_around(&line, "字");
+        assert_eq!(out.chars().count(), 80);
+        assert_eq!(out, "字".repeat(80));
     }
 
     /// 收集 `source` 当前的出边来源标记，用于断言 wiki/manual 边集。

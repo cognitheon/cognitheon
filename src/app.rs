@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use egui::{Align, ComboBox, Id, Layout, RichText};
+use egui::text::{LayoutJob, TextFormat};
+use egui::{Align, Color32, ComboBox, FontId, Id, Layout, RichText};
 #[cfg(not(target_arch = "wasm32"))]
 use rfd::AsyncFileDialog;
 #[cfg(not(target_arch = "wasm32"))]
@@ -329,6 +330,19 @@ impl CognitheonApp {
                         if results.is_empty() {
                             ui.weak("无匹配节点");
                         } else {
+                            // 命中计数（N = 结果数；空 query 时即全部节点）。
+                            ui.weak(format!("{} 个匹配", results.len()));
+                            ui.add_space(2.0);
+
+                            // 着色取色：命中段用超链接强调色，普通段用 base 文本色。
+                            // 提前 copy 出（Color32: Copy），避免后续 &mut ui 借用冲突。
+                            let strong_col = ui.visuals().strong_text_color();
+                            let weak_col = ui.visuals().weak_text_color();
+                            let hit_col = ui.visuals().hyperlink_color;
+                            let body_h = ui.text_style_height(&egui::TextStyle::Body);
+                            let small_h = ui.text_style_height(&egui::TextStyle::Small);
+                            let q = query.trim();
+
                             egui::ScrollArea::vertical()
                                 .max_height(360.0)
                                 .auto_shrink([false, true])
@@ -339,23 +353,29 @@ impl CognitheonApp {
                                         } else {
                                             title.as_str()
                                         };
-                                        // 正文一行摘要：取首个非空行，截断。
-                                        let snippet = note
-                                            .lines()
-                                            .map(str::trim)
-                                            .find(|l| !l.is_empty())
-                                            .unwrap_or("");
+                                        // 标题着色：命中子串高亮，其余用 strong 文本色。
+                                        let title_job = highlight_job(
+                                            title_disp,
+                                            q,
+                                            strong_col,
+                                            hit_col,
+                                            FontId::proportional(body_h),
+                                        );
+                                        // 正文一行摘要：命中行优先、回退首个非空行，char 截断。
+                                        let snippet = wikilink::snippet_around(note, q);
                                         let resp = ui
-                                            .selectable_label(
-                                                row == selected,
-                                                RichText::new(title_disp).strong(),
-                                            )
-                                            .on_hover_text(snippet);
+                                            .selectable_label(row == selected, title_job)
+                                            .on_hover_text(snippet.as_str());
                                         if !snippet.is_empty() {
                                             ui.indent(("cp_snip", row), |ui| {
-                                                let short: String =
-                                                    snippet.chars().take(80).collect();
-                                                ui.label(RichText::new(short).weak().small());
+                                                let snip_job = highlight_job(
+                                                    &snippet,
+                                                    q,
+                                                    weak_col,
+                                                    hit_col,
+                                                    FontId::proportional(small_h),
+                                                );
+                                                ui.label(snip_job);
                                             });
                                         }
                                         if resp.clicked() {
@@ -446,6 +466,66 @@ impl CognitheonApp {
             });
         }
     }
+}
+
+/// 把 `text` 布局成 [`LayoutJob`]，其中（大小写不敏感地）匹配 `query` 的子串用 `hit` 色标出，
+/// 其余用 `base` 色——命令面板里直观展示"为何/在哪命中"。
+///
+/// 不变量（同 [`crate::ui::md_highlight`]）：输出的 `LayoutJob.text` 必须**逐字节覆盖** `text`，
+/// 否则 egui galley 文本与源不一致会 panic。下方"先冲刷未着色普通段、再追加命中段"严格保证这点。
+///
+/// 多字节安全：命中区间的端点 `hs`/`he` **只取自 `text.char_indices()` 产出的字节偏移**（始终落在
+/// char 边界），绝不裸 byte slice。匹配按 char 序列大小写不敏感比较（`q` = `query` 的小写 char 向量），
+/// 不依赖 `to_lowercase()` 的字节长度稳定性。`query` 为空时整段按 base 着色、不查找。
+fn highlight_job(text: &str, query: &str, base: Color32, hit: Color32, font: FontId) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    let base_fmt = TextFormat {
+        font_id: font.clone(),
+        color: base,
+        ..Default::default()
+    };
+    // 小写化的 query 字符序列（按 char 比较，避免 to_lowercase 改变字节长度带来的偏移错位）。
+    let q: Vec<char> = query.trim().to_lowercase().chars().collect();
+    if q.is_empty() || text.is_empty() {
+        job.append(text, 0.0, base_fmt);
+        return job;
+    }
+    let hit_fmt = TextFormat {
+        font_id: font,
+        color: hit,
+        ..Default::default()
+    };
+
+    // (字节偏移, 该位置起的小写 char 流) —— 命中端点只能取自这些 char 边界。
+    let starts: Vec<(usize, char)> = text
+        .char_indices()
+        .flat_map(|(b, ch)| ch.to_lowercase().map(move |lc| (b, lc)))
+        .collect();
+    // 注意：一个原文 char 小写化可能展开成多个 char（如 'İ'），它们共享同一字节偏移 `b`，
+    // 故命中端点回到原文字节偏移时天然对齐 char 边界。
+
+    let mut plain_start = 0usize; // 原文中尚未冲刷的普通段起点
+    let mut i = 0usize; // starts 上的扫描游标
+    while i + q.len() <= starts.len() {
+        let matched = (0..q.len()).all(|k| starts[i + k].1 == q[k]);
+        if matched {
+            let hs = starts[i].0; // 命中首字符的原文字节偏移
+            let hi_idx = i + q.len();
+            let he = starts.get(hi_idx).map(|s| s.0).unwrap_or(text.len()); // 命中后首字符偏移 / 末尾
+            if hs > plain_start {
+                job.append(&text[plain_start..hs], 0.0, base_fmt.clone());
+            }
+            job.append(&text[hs..he], 0.0, hit_fmt.clone());
+            plain_start = he;
+            i = hi_idx; // 不重叠匹配
+        } else {
+            i += 1;
+        }
+    }
+    if text.len() > plain_start {
+        job.append(&text[plain_start..], 0.0, base_fmt);
+    }
+    job
 }
 
 impl eframe::App for CognitheonApp {
@@ -872,4 +952,57 @@ fn setup_font(ctx: &egui::Context) {
 
     // Tell egui to use these fonts:
     ctx.set_fonts(fonts);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job_text(text: &str, query: &str) -> LayoutJob {
+        highlight_job(
+            text,
+            query,
+            Color32::WHITE,
+            Color32::RED,
+            FontId::proportional(14.0),
+        )
+    }
+
+    /// 着色后的 LayoutJob.text 必须逐字节覆盖源文本，否则 egui galley 会 panic。
+    #[test]
+    fn highlight_covers_source_byte_for_byte() {
+        for (text, query) in [
+            ("", "x"),
+            ("纯中文标题", ""),
+            ("Hello World", "world"),
+            ("知识图谱与第二大脑", "图谱"),
+            ("AaAaA", "a"),
+            ("重复重复重复", "重复"),
+            ("末尾命中关键词", "关键词"),
+            ("关键词在开头", "关键词"),
+            ("no match here", "zzz"),
+            ("混合 Mixed 大小写 CASE", "case"),
+        ] {
+            let job = job_text(text, query);
+            assert_eq!(job.text, text, "源={text:?} query={query:?} 必须逐字节覆盖");
+        }
+    }
+
+    /// 命中段着 hit 色、其余 base 色；区间端点落在 char 边界（中文不 panic）。
+    #[test]
+    fn highlight_marks_matched_segments() {
+        let job = job_text("前缀关键词后缀", "关键词");
+        // 段切分：前缀 / 关键词 / 后缀
+        assert_eq!(job.sections.len(), 3);
+        let colors: Vec<Color32> = job.sections.iter().map(|s| s.format.color).collect();
+        assert_eq!(colors, vec![Color32::WHITE, Color32::RED, Color32::WHITE]);
+    }
+
+    /// query 为空或无命中：整段单一 base 段，零着色。
+    #[test]
+    fn highlight_no_query_is_all_base() {
+        let job = job_text("任意文本", "");
+        assert_eq!(job.sections.len(), 1);
+        assert_eq!(job.sections[0].format.color, Color32::WHITE);
+    }
 }
