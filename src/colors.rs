@@ -12,6 +12,12 @@ pub fn node_border_selected(_theme: egui::Theme) -> egui::Color32 {
     egui::Color32::from_rgba_premultiplied(222, 78, 78, 200)
 }
 
+/// 搜索命中态的节点描边色——琥珀 / 金色，刻意区别于"选中红"（`node_border_selected`）与
+/// 边 hover 的浅蓝（`edge_hover`），让"当前搜索命中集"在画布上一眼可辨。两主题统一。
+pub fn node_border_hit(_theme: egui::Theme) -> egui::Color32 {
+    egui::Color32::from_rgba_premultiplied(240, 184, 40, 230)
+}
+
 pub fn node_background(theme: egui::Theme) -> egui::Color32 {
     if theme == egui::Theme::Light {
         egui::Color32::from_rgba_premultiplied(180, 180, 180, 200)

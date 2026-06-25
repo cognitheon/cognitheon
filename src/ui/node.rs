@@ -10,7 +10,7 @@ use egui::{Id, Sense, Stroke, Widget};
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use petgraph::graph::NodeIndex;
 
-use crate::colors::{node_background, node_border, node_border_selected};
+use crate::colors::{node_background, node_border, node_border_hit, node_border_selected};
 
 thread_local! {
     /// 复用的 Markdown 渲染缓存（egui 单线程；避免每帧每节点重建）。
@@ -319,6 +319,12 @@ const WIKILINK_SCHEME: &str = "wikilink:";
 /// 读取并调用既有 `focus_node`（选中 + 居中）后清除——复用单一 focus 实现、零跨层耦合。
 pub const FOCUS_REQUEST_KEY: &str = "focus_request_node";
 
+/// 搜索命中高亮集总线 key（隐式状态总线约定，纯 UI、不进序列化）：命令面板搜索时把当前
+/// 命中的 [`NodeIndex`] 列表写入 egui temp data（`Vec<NodeIndex>`），[`NodeWidget`] 渲染末尾
+/// 读它，若本节点在集内则补画一圈命中色描边（[`crate::colors::node_border_hit`]）。
+/// F3 / Shift+F3 巡览靠配套的游标 key（见 [`crate::app`]），Esc 清空本集即清除高亮。
+pub const SEARCH_HITS_KEY: &str = "search_hits";
+
 /// 转义双链标题作为 markdown 链接显示文本 `[…]`：反斜杠转义会破坏链接文本闭合的字符
 /// （`\`、`[`、`]`），使含 markdown 特殊字符的标题（如 `a[b]`）能完整、安全地显示。
 fn escape_md_link_text(title: &str) -> String {
@@ -344,6 +350,14 @@ impl Widget for NodeWidget {
         let selected = self.graph_resource.read_resource(
             |g| matches!(&g.selected, GraphSelection::Node(ns) if ns.contains(&self.node_index)),
         );
+
+        // 搜索命中高亮：是否在当前命中集内（隐式状态总线，纯 UI、§3.3 只依赖本 widget 自身
+        // rect，不读跨组件 observer 几何）。命中集由命令面板搜索写入（见 [`crate::app`]），
+        // Esc 清空即不再高亮。失效/不存在时 `get_temp` 返回 None → `is_hit = false`，安全早退。
+        let is_hit = ui.ctx().data(|d| {
+            d.get_temp::<Vec<NodeIndex>>(Id::new(SEARCH_HITS_KEY))
+                .is_some_and(|hits| hits.contains(&self.node_index))
+        });
 
         let screen_pos = self
             .canvas_state_resource
@@ -396,6 +410,21 @@ impl Widget for NodeWidget {
         });
 
         let rect = card.inner;
+
+        // 搜索命中态：在卡片 rect **更外侧**补画一圈琥珀/金色描边（命中色，区别于选中红 / 边 hover 蓝）。
+        // 画在选中环之外（先画、半径更大、外扩 3px），故"选中 + 命中"时两环并存且不互相遮挡：
+        // 内红外金，选中语义仍占优（红更贴近卡片）。描边像素与卡片本身一致——卡片是固定像素尺寸
+        // （CARD_WIDTH，刻意不随画布缩放，见上方 Frame 注释），故描边宽 / 外扩量也用固定像素、
+        // 不 ×scaling（§3.2 的 ×scaling 只适用于随画布缩放的画布空间元素；此卡片不缩放）。
+        if is_hit {
+            let hit_rect = rect.expand(3.0);
+            ui.painter().rect_stroke(
+                hit_rect,
+                9.0, // = Frame 圆角 6 + 外扩 3，保持圆角同心
+                Stroke::new(2.5, node_border_hit(theme)),
+                egui::StrokeKind::Outside,
+            );
+        }
 
         // 选中态：在卡片 rect 外侧补画一圈更粗的边框（StrokeKind::Outside，向外扩展，
         // 不侵占内容、不改变布局 geometry → 无颤动）。corner_radius 与 Frame 的 6 对齐。

@@ -27,7 +27,8 @@ use crate::wikilink;
 ///   `handle_delete_key`（Delete/Backspace）、`Selecting` 框选。
 /// - 编辑：`node.rs::show_editor` 的 Ctrl/Cmd+Enter 退出 + `wikilink_autocomplete`（`[[` 触发，
 ///   Tab/Enter 确认、↑↓ 选择、Esc 关闭）。
-/// - 历史 / 搜索：`app.rs::ui` 顶部的 Ctrl/Cmd+Z、Ctrl/Cmd+Y、Ctrl/Cmd+Shift+Z、Ctrl/Cmd+P。
+/// - 历史 / 搜索：`app.rs::ui` 顶部的 Ctrl/Cmd+Z、Ctrl/Cmd+Y、Ctrl/Cmd+Shift+Z、Ctrl/Cmd+P，
+///   以及 `handle_search_hits_nav`（F3 / Shift+F3 巡览搜索命中、Esc 清除画布命中高亮）。
 type KeymapSection = (&'static str, &'static [(&'static str, &'static str)]);
 const KEYMAP_HELP: &[KeymapSection] = &[
     (
@@ -86,10 +87,15 @@ const KEYMAP_HELP: &[KeymapSection] = &[
     ),
     (
         "搜索 / 导航",
-        &[(
-            "Ctrl / Cmd + P",
-            "命令面板（搜索；↑↓ 移动、Enter 跳转、Esc 关闭）",
-        )],
+        &[
+            (
+                "Ctrl / Cmd + P",
+                "命令面板（搜索；↑↓ 移动、Enter 跳转、Esc 关闭）",
+            ),
+            ("F3", "跳到下一个搜索命中并居中（循环）"),
+            ("Shift + F3", "跳到上一个搜索命中并居中（循环）"),
+            ("Esc", "清除画布上的搜索命中高亮"),
+        ],
     ),
     (
         "布局",
@@ -97,6 +103,14 @@ const KEYMAP_HELP: &[KeymapSection] = &[
     ),
     ("帮助", &[("? / F1", "打开 / 关闭本帮助")]),
 ];
+
+/// 搜索命中巡览游标的总线 key（隐式状态总线约定，纯 UI、不进序列化）。
+///
+/// 与命中集 [`crate::ui::node::SEARCH_HITS_KEY`]（`Vec<NodeIndex>`）配套：本 key 存
+/// `Option<usize>`，= 命中集中"当前已聚焦项"的下标，`None` 表示"尚未巡览"（命令面板刚写入命中集时）。
+/// `F3` / `Shift+F3` 在 [`eframe::App::ui`] 顶部据它对命中集做循环巡览并 `focus_node`（选中 + 居中）：
+/// `None` 时首个 `F3` 落到第 0 项、`Shift+F3` 落到末项；其后循环 ±1。`Esc` 清空命中集时连同它一并移除。
+const SEARCH_HITS_CURSOR_KEY: &str = "search_hits_cursor";
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
@@ -527,10 +541,31 @@ impl CognitheonApp {
             });
 
         if query_changed {
-            // query 变化：写回并把高亮复位到第一项。
+            // query 变化：写回并把面板高亮复位到第一项。
             ctx.data_mut(|d| {
                 d.insert_temp(query_id, query.clone());
                 d.insert_temp(sel_id, 0usize);
+            });
+            // 同步刷新「画布命中高亮集」（实时高亮 + F3 巡览的数据源）：
+            // - 非空 query：把当前命中节点写入命中集、巡览游标复位 0（NodeWidget 据此发金色描边）；
+            // - 空 query（=全部节点的快速跳转列表）：清空命中集，避免"全图高亮"的视觉噪声。
+            // 命中集 / 游标都是纯 UI temp data、不进序列化；关闭面板后仍保留供 F3 巡览，直到 Esc 清除。
+            let hits: Vec<petgraph::graph::NodeIndex> = if query.trim().is_empty() {
+                Vec::new()
+            } else {
+                results.iter().map(|(i, _, _)| *i).collect()
+            };
+            ctx.data_mut(|d| {
+                if hits.is_empty() {
+                    d.remove::<Vec<petgraph::graph::NodeIndex>>(Id::new(
+                        crate::ui::node::SEARCH_HITS_KEY,
+                    ));
+                    d.remove::<Option<usize>>(Id::new(SEARCH_HITS_CURSOR_KEY));
+                } else {
+                    d.insert_temp(Id::new(crate::ui::node::SEARCH_HITS_KEY), hits);
+                    // 游标置 None：尚未巡览，首个 F3 落到第 0 项。
+                    d.insert_temp(Id::new(SEARCH_HITS_CURSOR_KEY), Option::<usize>::None);
+                }
             });
         } else {
             ctx.data_mut(|d| d.insert_temp(sel_id, selected));
@@ -603,6 +638,69 @@ impl CognitheonApp {
                 cs.transform.translation = center.to_vec2() - s * pos.to_vec2();
             });
         }
+    }
+
+    /// 搜索命中巡览的键盘处理：`F3` 下一个命中、`Shift+F3` 上一个（循环、复用 [`Self::focus_node`]
+    /// 选中 + 居中）；`Esc` 清除画布命中高亮（**仅在命中集非空时**才 consume，避免误吞本该给
+    /// 状态机 / 编辑态 / 浮层的 Esc）。
+    ///
+    /// 数据源是隐式状态总线（纯 UI temp data、不进序列化）：命中集 [`crate::ui::node::SEARCH_HITS_KEY`]
+    /// （`Vec<NodeIndex>`，命令面板搜索写入）+ 巡览游标 [`SEARCH_HITS_CURSOR_KEY`]（`usize`）。
+    ///
+    /// 调用时机（§3.4）：在 [`eframe::App::ui`] 顶部、画布 `state_manager` 渲染之前 consume，
+    /// 故按键不泄漏给状态机。Esc 协调顺序：帮助浮层 / 命令面板的 Esc 已在更靠前处 consume
+    /// （浮层/面板开着时它们先吃 Esc），到这里只有"无浮层、有命中高亮"时 Esc 才被本方法消费。
+    ///
+    /// 容错（§3.3）：命中集里的 `NodeIndex` 可能在搜索后被删；`focus_node` 内 `get_node` 已 `Option`
+    /// 容错（失效则不居中、仅清选区），不 panic。
+    fn handle_search_hits_nav(&self, ctx: &egui::Context, text_focus: bool) {
+        let hits_id = Id::new(crate::ui::node::SEARCH_HITS_KEY);
+        let cursor_id = Id::new(SEARCH_HITS_CURSOR_KEY);
+
+        let hits: Vec<petgraph::graph::NodeIndex> = ctx
+            .data(|d| d.get_temp::<Vec<petgraph::graph::NodeIndex>>(hits_id))
+            .unwrap_or_default();
+
+        // Esc 仅在有命中高亮时消费并清除——空集时放行给后续（状态机 / 编辑态 / 其它浮层）。
+        if !hits.is_empty()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            ctx.data_mut(|d| {
+                d.remove::<Vec<petgraph::graph::NodeIndex>>(hits_id);
+                d.remove::<Option<usize>>(cursor_id);
+            });
+            log::debug!("search hits highlight cleared (Esc)");
+            return;
+        }
+
+        // F3 / Shift+F3 巡览：F3 不是文本字符，但编辑态 / 文本框持焦时不抢（与 ? 门控一致）。
+        if hits.is_empty() || text_focus {
+            return;
+        }
+
+        // 先判 Shift+F3（上一个），再判 F3（下一个）——consume_key 走 matches_logically
+        // 忽略多余修饰键，故 F3 须放在带 SHIFT 的判定之后，避免 Shift+F3 被无修饰 F3 误吞。
+        let prev = ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::F3));
+        let next = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F3));
+        if !prev && !next {
+            return;
+        }
+
+        let cursor = ctx
+            .data(|d| d.get_temp::<Option<usize>>(cursor_id))
+            .flatten();
+        let len = hits.len();
+        // 循环巡览：未巡览（None）时首个 F3 → 第 0 项、Shift+F3 → 末项；其后循环 ±1。
+        let new_cursor = match (cursor, next) {
+            (None, true) => 0,
+            (None, false) => len - 1,
+            (Some(c), true) => (c + 1) % len,
+            (Some(c), false) => (c + len - 1) % len,
+        };
+        ctx.data_mut(|d| d.insert_temp(cursor_id, Some(new_cursor)));
+        let target = hits[new_cursor];
+        log::debug!("search hits nav -> {new_cursor}/{len} = {target:?}");
+        self.focus_node(ctx, target);
     }
 
     /// 右键上下文菜单（节点 / 边 / 空白）+ 删除可视 UI。
@@ -1035,6 +1133,11 @@ impl eframe::App for CognitheonApp {
                 log::debug!("undo");
             }
         }
+
+        // 搜索命中巡览：F3 跳下一个命中并居中、Shift+F3 上一个、Esc 清除画布命中高亮。
+        // 与 Ctrl+P / 撤销同范式，在画布 state_manager 渲染前截获并 consume（§3.4：输入只在
+        // app.rs 顶部 consume）。命中集 / 游标读自隐式状态总线（命令面板搜索写入）。
+        self.handle_search_hits_nav(&ctx, text_focus);
 
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
